@@ -211,6 +211,43 @@ exact total.
 the prescribed pace may be too fast, because that is usually a pace to hold rather than a plan to
 change.
 
+## A trained plan must contain hard sessions — and that is currently unenforced
+
+**Open bug, cause unknown. Do not re-derive it from the code.** A runner with two years' training,
+three days a week, a 24:10 5K, a 52:25 10K and a 1:56:10 half, **with a goal race set**, is seeing
+only Easy runs and a Long run — no intervals, no threshold, no tempo.
+
+Two diagnoses were reached and **both were wrong**:
+
+1. *An accepted `drop-quality` proposal.* Plausible, because `suppressQuality` replaces the quality
+   slot with an easy run, so a 3-day week becomes `Easy | Easy | Long` — character-for-character
+   what was reported. Wrong: nothing is listed as applied, and the directive only exists if the
+   runner taps accept.
+2. *`isBeginnerPath` misrouting them.* Right instinct, wrong conclusion. Every branch was checked
+   against the reported numbers and cleared.
+
+**Run `integration_test/diagnostic_hard_sessions_test.dart` on the device first.** It prints the
+stored profile, evaluates each `isBeginnerPath` branch separately, and lists every generated week
+with its session types. It overwrites stored storage.
+
+**The lesson worth keeping:** two different causes render an *identical* week, and nothing in the UI
+distinguishes them. Reading the source confidently was actively misleading, twice. When a rendering
+ambiguity hides the cause, instrument the real state rather than reasoning about the code — and
+prefer a diagnostic the user can paste back over an argument about which branch it must be.
+
+**A test that would have caught this, and does not exist yet:** a trained plan must carry at least
+one quality session in every non-cutback, non-taper week. Until that is asserted, nothing prevents
+the regression. Add it with the fix.
+
+Two related design facts, already confirmed and independent of the bug:
+
+- **Without a goal race, intervals are structurally unreachable.** `buildTrainedBasePlan` sets
+  `phases = List.filled(12, PlanPhase.base)`, and `_quality` only emits intervals in
+  `PlanPhase.specific`. The base block is 12 identical tempos.
+- **`suppressQuality` is blunt on a 3-day plan.** There, the tempo is the *only* quality session, so
+  suppressing it leaves an all-easy plan. The beginner-block "zero quality is safe" property covers a
+  *starting* block, not an end state for a trained runner.
+
 ## The 90% rule (reactive volume curve)
 
 `generate()` takes `weekLogs` as an **explicit input**, so the plan is still a pure function — the
