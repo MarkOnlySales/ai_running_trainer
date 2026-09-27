@@ -182,17 +182,22 @@ class TrainerController extends ChangeNotifier {
 
   /// Marks a plan week done or not-done, from the one-tap control.
   ///
-  /// The quick button is **authoritative**, not a merge: it sets the week to a
-  /// clean completed state and discards any partial detail. Two reasons —
-  /// a runner tapping "done" means "I did this week", and a predictable
-  /// button is better than one whose effect depends on invisible prior state.
-  /// Anyone who wants the nuance uses the log sheet.
+  /// The quick button is **authoritative** for the week's *self-reported* fields:
+  /// it clears difficulty and mileage so the effect never depends on invisible
+  /// prior state. A predictable button beats one whose behaviour is a function
+  /// of what happens to be lying around.
   ///
-  /// Un-marking clears the week's own data as well as everything after it. You
-  /// cannot have run part of a week and also disowned the week itself, and a
-  /// half-recorded incomplete week produces misleading adherence figures.
-  Future<void> markWeekComplete(int weekIndex, {bool value = true}) =>
-      logWeek(weekIndex, value ? const WeekLog(completed: true) : const WeekLog());
+  /// **Per-session records survive.** They are what the runner actually did, and
+  /// they are the most expensive data in the app to reproduce — losing a week of
+  /// one-tap-per-session logging because someone tapped "done" would be throwing
+  /// away the thing that took the most effort. Un-marking still clears the
+  /// week's own data as well as everything after it, because you cannot have run
+  /// part of a week and also disowned the week itself.
+  Future<void> markWeekComplete(int weekIndex, {bool value = true}) {
+    if (!value) return logWeek(weekIndex, const WeekLog());
+    final existing = logWeekFor(weekIndex);
+    return logWeek(weekIndex, existing.clearedForQuickDone());
+  }
 
   /// Records what actually happened in a week.
   ///
@@ -231,6 +236,51 @@ class TrainerController extends ChangeNotifier {
 
   /// The current record for a week.
   WeekLog logWeekFor(int weekIndex) => progress?.logFor(weekIndex) ?? const WeekLog();
+
+  /// Records how one prescribed session went.
+  ///
+  /// Additive and forgiving: it merges into whatever is already recorded for
+  /// that day rather than replacing the week, because a runner tapping "that
+  /// one was hard" has not just invalidated everything else they told us about
+  /// the week. A null [felt] clears the record for that day rather than storing
+  /// a "not sure" — the same rule as everywhere else in this app: absent means
+  /// unknown, never bad.
+  Future<void> logSession(
+    int weekIndex,
+    int dayOfWeek, {
+    SessionFelt? felt,
+    bool clearFelt = false,
+  }) async {
+    final plan = _plan;
+    if (plan == null) return;
+    if (weekIndex < 0 || weekIndex >= plan.weekCount) return;
+    if (dayOfWeek < 1 || dayOfWeek > 7) return;
+
+    final key = weekKey(plan.weeks[weekIndex].startDate);
+    final log = _weekLogs[key] ?? const WeekLog();
+
+    final updated = [
+      for (final s in log.sessions)
+        if (s.dayOfWeek != dayOfWeek) s,
+      if (!clearFelt)
+        SessionLog(dayOfWeek: dayOfWeek, felt: felt ?? _existingFelt(log, dayOfWeek)),
+    ];
+
+    // A week with a session record but no completion is still a real record, so
+    // `hasData` must stay true for it — otherwise marking effort during the week
+    // in progress would look like "nothing logged" to every rollup.
+    _weekLogs[key] = log.copyWith(sessions: updated);
+    _rebuild();
+    await _persist();
+    notifyListeners();
+  }
+
+  static SessionFelt? _existingFelt(WeekLog log, int day) {
+    for (final s in log.sessions) {
+      if (s.dayOfWeek == day) return s.felt;
+    }
+    return null;
+  }
 
   /// Wipes all state and returns to onboarding.
   Future<void> reset() async {

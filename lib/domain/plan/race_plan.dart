@@ -9,13 +9,13 @@ import 'beginner_plan.dart';
 import 'generate.dart';
 import '../models/goal.dart';
 import '../models/plan.dart';
+import '../models/plan_directive.dart';
 import '../models/profile.dart';
 import '../models/week_log.dart';
 import '../units.dart';
 import '../engine/volume.dart';
 
-/// Longest block we will generate. Beyond this the extra weeks are a plateau,
-/// not progress, and a 20-week plan is already a serious commitment.
+/// Longest block we will generate. Beyond this the extra weeks are a plateau,/// not progress, and a 20-week plan is already a serious commitment.
 const int maxPlanWeeks = 20;
 
 class RacePlanResult {
@@ -96,6 +96,7 @@ RacePlanResult buildRacePlan({
   Map<String, WeekLog> weekLogs = const {},
   int? holdFromWeekIndex,
   int? overrideDaysPerWeek,
+  PlanDirective directive = const PlanDirective(),
   List<PlanFlag> flags = const [],
 }) {
   final monday = alignToMonday(startDate);
@@ -146,8 +147,10 @@ RacePlanResult buildRacePlan({
 
     if (isRaceWeek) {
       // Through enforcement like every other week, so the reported volume is
-      // the shakeout plus the race rather than an estimate of them.
-      weeks.add(enforceSafety(_raceWeek(i, weekStart, goal, paces)));
+      // the shakeout plus the race rather than an estimate of them. The race
+      // and shakeout place themselves, since a race week is not laid out by the
+      // day pattern.
+      weeks.add(enforceSafety(_raceWeek(i, weekStart, goal, paces, pattern)));
       continue;
     }
 
@@ -172,6 +175,7 @@ RacePlanResult buildRacePlan({
       paces: paces,
       weekIndex: i,
       isCutback: isCutback,
+      suppressQuality: directive.suppressQuality,
     );
 
     var week = PlanWeek(
@@ -221,8 +225,19 @@ RacePlanResult buildRacePlan({
   );
 }
 
-PlanWeek _raceWeek(int index, DateTime weekStart, GoalRace goal, TrainingPaces paces) {
+PlanWeek _raceWeek(
+  int index,
+  DateTime weekStart,
+  GoalRace goal,
+  TrainingPaces paces,
+  List<int> pattern,
+) {
   final raceKm = goal.distance.metres / 1000;
+  // The race takes the plan's last run day, the shakeout its first, and the
+  // rest whatever day falls between them. A session log needs all three placed.
+  final raceDay = pattern.isEmpty ? 7 : pattern.last;
+  final shakeoutDay = pattern.length > 1 ? pattern.first : 1;
+  final restDay = shakeoutDay < raceDay ? shakeoutDay + 1 : 1;
   return PlanWeek(
     weekNumber: index + 1,
     startDate: weekStart,
@@ -235,6 +250,7 @@ PlanWeek _raceWeek(int index, DateTime weekStart, GoalRace goal, TrainingPaces p
         zone: IntensityZone.recovery,
         distanceKm: 4,
         targetDuration: Duration(minutes: 30),
+        weekday: shakeoutDay,
         description:
             '4 km very easy with 4 x 20s strides. Nothing more. You want to '
             'arrive on Sunday rested, not tired.',
@@ -244,7 +260,7 @@ PlanWeek _raceWeek(int index, DateTime weekStart, GoalRace goal, TrainingPaces p
         type: WorkoutType.rest,
         zone: IntensityZone.recovery,
         description: 'No running today.',
-      ),
+      ).withWeekday(restDay),
       Workout(
         title: goal.distance.label,
         type: WorkoutType.race,
@@ -252,6 +268,7 @@ PlanWeek _raceWeek(int index, DateTime weekStart, GoalRace goal, TrainingPaces p
         distanceKm: raceKm,
         targetDuration: goal.finishTimeGoal,
         isQuality: true,
+        weekday: raceDay,
         description:
             'Your goal race. Start controlled — the first 5 km slower than '
             'feels right — and move up only when the pace is effortless.',
@@ -268,8 +285,13 @@ List<Workout> _buildWeek({
   required TrainingPaces paces,
   required int weekIndex,
   required bool isCutback,
+  required bool suppressQuality,
 }) {
-  final qualityCount = isCutback ? 0 : qualitySessionsFor(phase);
+  // `suppressQuality` turns hard sessions into easy ones rather than dropping
+  // days, so the week keeps its mileage and its shape. The beginner base block
+  // is a proven zero-quality plan, so the resulting shape is known to be valid.
+  final qualityCount =
+      isCutback || suppressQuality ? 0 : qualitySessionsFor(phase);
   final days = pattern.length;
   final workouts = <Workout>[];
 
@@ -330,7 +352,7 @@ List<Workout> _buildWeek({
     }
   }
 
-  return workouts;
+  return attachWeekdays(workouts, pattern);
 }
 
 /// Reps in an interval session, and the shape of each.

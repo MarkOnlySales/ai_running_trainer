@@ -151,27 +151,32 @@ TrainingPlan buildBeginnerPlan({
       }
     }
 
+    // Stamp before the race is appended. The race occupies the long run's slot
+    // in the week, so it goes on afterwards with that day attached directly.
+    final stamped = attachWeekdays(workouts, pattern);
     if (raceWeek != null) {
-      workouts.add(Workout(
+      stamped.add(Workout(
         title: raceWeek.distance.label,
         type: WorkoutType.race,
         zone: IntensityZone.marathon,
         distanceKm: raceWeek.distance.metres / 1000,
         targetDuration: raceWeek.finishTimeGoal,
         isQuality: true,
+        // The race sits where the long run would have been.
+        weekday: longDay,
         description:
             'Your goal race. Run it at the effort you trained for — easy and '
             'controlled, and take it from the start. Finishing is the goal.',
       ));
     }
 
-    workouts.sort((a, b) => a.title.compareTo(b.title));
+    stamped.sort((a, b) => a.title.compareTo(b.title));
 
     // Constrain first, then measure. Deriving the target from the pre-trim list
     // reported a volume the week could no longer reach — the day constraint had
     // already dropped sessions by the time the runner read the number.
     final constrained =
-        applyDayConstraint(workouts, dayCount, minimumRuns: beginnerMinimumRuns);
+        applyDayConstraint(stamped, dayCount, minimumRuns: beginnerMinimumRuns);
 
     var week = enforceSafety(PlanWeek(
       weekNumber: i + 1,

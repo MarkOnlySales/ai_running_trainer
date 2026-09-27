@@ -120,6 +120,8 @@ FitnessAssessment assessFitness(List<RaceResult> races, DateTime now) {
     notes.add('VDOT ${vdot.round()} from a stale result — it is a floor, not a ceiling.');
   }
 
+  notes.addAll(_heartRateNotes(fresh));
+
   final equivalents = <RaceDistance, Duration>{};
   for (final d in RaceDistance.values) {
     if (d == anchor.distance) {
@@ -137,4 +139,54 @@ FitnessAssessment assessFitness(List<RaceResult> races, DateTime now) {
     notes: notes,
     hasFreshRace: hasFreshRace,
   );
+}
+
+/// Plausible average heart-rate range per race, in bpm.
+///
+/// Wide on purpose. These are **error bounds, not zone boundaries** — their only
+/// job is to catch a mistyped digit, and they must never be mistaken for a
+/// statement about training intensity. A genuine outlier on a hot day or with
+/// poor sleep lands inside these bounds, and rightly is not flagged.
+const Map<RaceDistance, (int, int)> _plausibleHr = {
+  RaceDistance.k5: (130, 200),
+  RaceDistance.k10: (125, 198),
+  RaceDistance.half: (115, 190),
+  RaceDistance.marathon: (100, 185),
+};
+
+/// Notes about heart rates recorded against races.
+///
+/// Everything here is a disclosure or an error check. None of it reaches
+/// `vdotFor`, `riiegel` or `zoneAnchorPace` — see
+/// `test/domain/heart_rate_guard_test.dart`, which fails if that ever changes.
+List<String> _heartRateNotes(List<RaceResult> races) {
+  final notes = <String>[];
+
+  // A set where only some races carry a heart rate is more misleading than one
+  // with none at all: it looks like the others were forgotten rather than
+  // deliberately skipped, and two devices rarely agree.
+  final withHr = races.where((r) => r.hasHr).length;
+  if (withHr > 0 && withHr < races.length) {
+    notes.add(
+      'Some of your results have a heart rate and some do not. If they came from '
+      'different devices they are not the same measurement, so none of them '
+      'change the plan — they are recorded for your reference only.',
+    );
+  }
+
+  for (final r in races) {
+    final hr = r.averageHr;
+    if (hr == null) continue;
+    final bounds = _plausibleHr[r.distance];
+    if (bounds == null) continue;
+    if (hr < bounds.$1 || hr > bounds.$2) {
+      notes.add(
+        'Your ${r.distance.label} average heart rate is recorded as $hr bpm, which '
+        'is outside what that distance normally produces. It is probably worth '
+        'checking for a typo. It has not been used to build anything.',
+      );
+    }
+  }
+
+  return notes;
 }

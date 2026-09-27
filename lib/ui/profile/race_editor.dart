@@ -6,6 +6,7 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../domain/models/race.dart';
 import '../../domain/units.dart';
@@ -33,6 +34,7 @@ class RaceEditor extends StatefulWidget {
 
 class _RaceEditorState extends State<RaceEditor> {
   final _times = <RaceDistance, TextEditingController>{};
+  final _hrs = <RaceDistance, TextEditingController>{};
   final _dates = <RaceDistance, DateTime>{};
 
   @override
@@ -50,11 +52,14 @@ class _RaceEditorState extends State<RaceEditor> {
   void _seed() {
     for (final d in RaceDistance.values) {
       _times[d]?.dispose();
+      _hrs[d]?.dispose();
       _times[d] = TextEditingController();
+      _hrs[d] = TextEditingController();
       _dates[d] = DateTime.now().subtract(const Duration(days: 60));
     }
     for (final r in widget.value) {
       _times[r.distance]!.text = formatTimeInput(r.time);
+      if (r.averageHr != null) _hrs[r.distance]!.text = '${r.averageHr}';
       _dates[r.distance] = r.date;
     }
   }
@@ -62,6 +67,9 @@ class _RaceEditorState extends State<RaceEditor> {
   @override
   void dispose() {
     for (final c in _times.values) {
+      c.dispose();
+    }
+    for (final c in _hrs.values) {
       c.dispose();
     }
     super.dispose();
@@ -72,7 +80,12 @@ class _RaceEditorState extends State<RaceEditor> {
     for (final d in RaceDistance.values) {
       final t = parseTimeInput(_times[d]!.text);
       if (t == null) continue;
-      races.add(RaceResult(distance: d, time: t, date: _dates[d]!));
+      races.add(RaceResult(
+        distance: d,
+        time: t,
+        date: _dates[d]!,
+        averageHr: int.tryParse(_hrs[d]!.text.trim()),
+      ));
     }
     widget.onChanged(races);
   }
@@ -96,6 +109,7 @@ class _RaceEditorState extends State<RaceEditor> {
             controller: _times[d]!,
             date: _dates[d]!,
             dateLabel: _age(d),
+            hrController: _hrs[d]!,
             onChanged: (_) => _emit(),
             onPickDate: () async {
               final picked = await showDatePicker(
@@ -117,6 +131,14 @@ class _RaceEditorState extends State<RaceEditor> {
           'Leave anything blank you are not sure about.',
           style: theme.bodyMuted.copyWith(fontSize: 12),
         ),
+        const SizedBox(height: AppSpacing.sm),
+        const Callout(
+          'A heart rate is optional and is never used to build anything. Your '
+          'pacing comes from your finish times, which are a far more reliable '
+          'measure of fitness than a heart rate — and a heart rate depends on '
+          'which device you wore and how hot it was. We keep it only so we can '
+          'point out a goal that asks more than you have run before.',
+        ),
       ],
     );
   }
@@ -135,11 +157,13 @@ class RaceField extends StatelessWidget {
     required this.date,
     required this.onPickDate,
     required this.dateLabel,
+    this.hrController,
     this.onChanged,
   });
 
   final RaceDistance distance;
   final TextEditingController controller;
+  final TextEditingController? hrController;
   final DateTime date;
   final VoidCallback onPickDate;
   final String dateLabel;
@@ -188,21 +212,54 @@ class RaceField extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          TextField(
-            controller: controller,
-            onChanged: onChanged,
-            style: theme.tabular.copyWith(fontSize: 18),
-            decoration: InputDecoration(
-              hintText: switch (distance) {
-                RaceDistance.k5 => '22:30',
-                RaceDistance.k10 => '45:00',
-                RaceDistance.half => '1:45:00',
-                RaceDistance.marathon => '3:30:00',
-              },
-              isDense: true,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 3,
+                child: TextField(
+                  controller: controller,
+                  onChanged: onChanged,
+                  style: theme.tabular.copyWith(fontSize: 18),
+                  decoration: InputDecoration(
+                    hintText: switch (distance) {
+                      RaceDistance.k5 => '22:30',
+                      RaceDistance.k10 => '45:00',
+                      RaceDistance.half => '1:45:00',
+                      RaceDistance.marathon => '3:30:00',
+                    },
+                    isDense: true,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                ),
+              ),
+              if (hrController != null) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 2,
+                  child: TextField(
+                    key: Key('race-hr-${distance.name}'),
+                    controller: hrController,
+                    onChanged: onChanged,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(3),
+                    ],
+                    style: theme.tabular.copyWith(fontSize: 18),
+                    decoration: const InputDecoration(
+                      hintText: '165',
+                      labelText: 'Avg HR',
+                      suffixText: 'bpm',
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ],
       ),

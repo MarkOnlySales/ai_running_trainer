@@ -72,12 +72,25 @@ TrainingPlan generate({
   final fitness = assessFitness(races, startDate);
   final beginner = isBeginnerPath(profile, fitness);
 
+  // The week *structure* is known before any week is built: it depends only on
+  // the goal and the start date. That is what lets the observed-intensity check
+  // run inside `validate` without a generated plan to hand.
+  final monday = alignToMonday(startDate);
+  final totalWeeks = beginner
+      ? beginnerPlanWeeks
+      : (goal == null
+          ? trainedBaseWeeks
+          : (goal.weeksUntilFrom(monday)
+              .clampI(minimumWeeksForFullPlan, maxPlanWeeks)));
+
   final flags = validate(
     profile: profile,
     fitness: fitness,
     goal: goal,
     today: startDate,
     weekLogs: weekLogs,
+    weekCount: totalWeeks,
+    weekStartFor: (i) => monday.add(Duration(days: 7 * i)),
   );
 
   final paces = derivePaces(fitness: fitness, goal: goal, beginner: beginner);
@@ -114,6 +127,7 @@ TrainingPlan generate({
       weekLogs: weekLogs,
       holdFromWeekIndex: holdFrom,
       overrideDaysPerWeek: days,
+      directive: directive,
       flags: flags,
     );
     return result.plan;
@@ -127,6 +141,7 @@ TrainingPlan generate({
     currentWeeklyKm: profile.estimatedWeeklyKm ?? _impliedVolume(fitness),
     weekLogs: weekLogs,
     holdFromWeekIndex: holdFrom,
+    directive: directive,
     flags: flags,
   );
 }
@@ -237,9 +252,10 @@ TrainingPlan buildTrainedBasePlan({
   required double currentWeeklyKm,
   Map<String, WeekLog> weekLogs = const {},
   int? holdFromWeekIndex,
+  PlanDirective directive = const PlanDirective(),
   List<PlanFlag> flags = const [],
 }) {
-  const totalWeeks = 12;
+  const totalWeeks = trainedBaseWeeks;
   final monday = alignToMonday(startDate);
   final ceiling = weeklyVolumeCeiling(beginner: false, goal: null, currentWeeklyKm: currentWeeklyKm);
   final seed = currentWeeklyKm.clampD(15.0, ceiling);
@@ -299,6 +315,7 @@ TrainingPlan buildTrainedBasePlan({
         paces: paces,
         weekIndex: i,
         isCutback: isCutback,
+        suppressQuality: directive.suppressQuality,
       ),
     );
     week = enforceSafety(week);
@@ -335,17 +352,17 @@ List<Workout> _baseWeek({
   required TrainingPaces paces,
   required int weekIndex,
   required bool isCutback,
+  required bool suppressQuality,
 }) {
   final days = pattern.length;
   final workouts = <Workout>[];
   final longIndex = days - 1;
-  final tempoKm = capQualityAgainstLong(
-    qualityDistanceKm(targetVolume),
-    longKm,
-  );
+  final tempoKm = suppressQuality
+      ? 0.0
+      : capQualityAgainstLong(qualityDistanceKm(targetVolume), longKm);
+  final easyDays = days - 1 - (isCutback || suppressQuality ? 0 : 1);
   final easyKm =
-      ((targetVolume - tempoKm - longKm) /
-              (days - 1 - (isCutback ? 0 : 1)))
+      ((targetVolume - tempoKm - longKm) / easyDays.clampI(1, 99))
           .clampD(3.0, easyRunCapKm(longKm));
 
   for (var i = 0; i < days; i++) {
@@ -368,7 +385,7 @@ List<Workout> _baseWeek({
         targetDuration: paces.recovery.overDistance(easyKm * 1000),
         description: 'Deliberately slow.',
       ));
-    } else if (i == 1 && !isCutback) {
+    } else if (i == 1 && !isCutback && !suppressQuality) {
       workouts.add(Workout(
         title: 'Tempo',
         type: WorkoutType.tempo,
@@ -406,5 +423,5 @@ List<Workout> _baseWeek({
     }
   }
 
-  return workouts;
+  return attachWeekdays(workouts, pattern);
 }

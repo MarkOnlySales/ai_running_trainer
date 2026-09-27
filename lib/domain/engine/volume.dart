@@ -359,7 +359,53 @@ Workout _restWorkout() => const Workout(
       type: WorkoutType.rest,
       zone: IntensityZone.recovery,
       description: 'No running. Sleep, eat, let the training land.',
+      // Re-added by [applyDayConstraint] without a day; a dropped session's
+      // weekday is restored by the caller if it matters.
     );
+
+/// Stamps each workout with the weekday it is prescribed for.
+///
+/// [runs] must be the generator's output: run-day sessions in [pattern] order,
+/// followed by rest days. Stamps only — it never adds or removes a session, so
+/// it cannot change a week's mileage or its day count.
+///
+/// Rest days are stamped from the days the pattern omits, so a runner who logs
+/// a hard Sunday has it land on a day the plan actually placed something.
+///
+/// Done here rather than in each workout factory so a new session type cannot
+/// forget to attach its own day. That failure would be silent, surfacing only as
+/// a session log that never matches a session.
+List<Workout> attachWeekdays(List<Workout> runs, List<int> pattern) {
+  final restDays = [
+    for (var d = 1; d <= 7; d++)
+      if (!pattern.contains(d)) d,
+  ];
+  var run = 0;
+  var rest = 0;
+  return [
+    for (final w in runs)
+      if (w.type == WorkoutType.rest)
+        if (rest < restDays.length) _withWeekday(w, restDays[rest++]) else w
+      else if (run < pattern.length)
+        _withWeekday(w, pattern[run++])
+      else
+        w,
+  ];
+}
+
+Workout _withWeekday(Workout w, int weekday) => weekday == 0
+    ? w
+    : Workout(
+        title: w.title,
+        type: w.type,
+        zone: w.zone,
+        description: w.description,
+        distanceKm: w.distanceKm,
+        targetDuration: w.targetDuration,
+        isQuality: w.isQuality,
+        hardFractionOfDistance: w.hardFractionOfDistance,
+        weekday: weekday,
+      );
 
 /// How many run days a week actually prescribes.
 ///
@@ -418,16 +464,21 @@ PlanWeek enforceSafety(PlanWeek week) {
   final adjusted = [
     for (final w in week.workouts)
       if (w == long && cappedDistance != w.distanceKm)
-        Workout(
-          title: w.title,
-          type: w.type,
-          zone: w.zone,
-          description: w.description,
-          distanceKm: cappedDistance,
-          // A capped distance invalidates a duration derived from the old one.
-          targetDuration: cappedDistance == 0 ? w.targetDuration : null,
-          isQuality: w.isQuality,
-          hardFractionOfDistance: w.hardFractionOfDistance,
+        // `weekday` has to survive the rebuild, or capping a long run silently
+        // detaches it from the day a session log would refer to.
+        _withWeekday(
+          Workout(
+            title: w.title,
+            type: w.type,
+            zone: w.zone,
+            description: w.description,
+            distanceKm: cappedDistance,
+            // A capped distance invalidates a duration derived from the old one.
+            targetDuration: cappedDistance == 0 ? w.targetDuration : null,
+            isQuality: w.isQuality,
+            hardFractionOfDistance: w.hardFractionOfDistance,
+          ),
+          w.weekday ?? 0,
         )
       else
         w,

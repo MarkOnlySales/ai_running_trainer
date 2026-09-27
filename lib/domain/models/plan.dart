@@ -69,6 +69,7 @@ class Workout {
     this.targetDuration,
     this.isQuality = false,
     this.hardFractionOfDistance = 0,
+    this.weekday,
   });
 
   final String title;
@@ -96,6 +97,31 @@ class Workout {
   /// anyone on a three-day schedule, because one quality session would count
   /// as a third of the week entirely at threshold.
   final double hardFractionOfDistance;
+
+  /// Day of the week this session is prescribed for, 1 = Monday.
+  ///
+  /// Null for rest days and for anything not built from a day pattern. It exists
+  /// so a [SessionLog] — which records a *day*, not a timestamp — can be matched
+  /// back to the session it refers to. Without it "the tempo was hard" cannot be
+  /// told apart from "the long run was hard", which are opposite problems.
+  ///
+  /// Anything that rebuilds a [Workout] must carry this across, or capping a
+  /// long run silently detaches it from the day it belongs to.
+  final int? weekday;
+
+  /// A copy placed on [day]. Used where a workout is built by hand rather than
+  /// by a day pattern, and must not lose the other fields doing so.
+  Workout withWeekday(int day) => Workout(
+        title: title,
+        type: type,
+        zone: zone,
+        description: description,
+        distanceKm: distanceKm,
+        targetDuration: targetDuration,
+        isQuality: isQuality,
+        hardFractionOfDistance: hardFractionOfDistance,
+        weekday: day,
+      );
 
   @override
   String toString() => '$title (${zone.code})';

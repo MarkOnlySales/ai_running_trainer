@@ -16,6 +16,7 @@
 /// convenient to reach.
 library;
 
+import 'engine/volume.dart';
 import 'models/plan.dart';
 import 'models/week_log.dart';
 
@@ -24,6 +25,41 @@ String weekKey(DateTime weekStart) {
   final m = weekStart.month.toString().padLeft(2, '0');
   final d = weekStart.day.toString().padLeft(2, '0');
   return '${weekStart.year}-$m-$d';
+}
+
+/// Length of the untrained base block, in weeks.
+///
+/// Named rather than inlined because `generate` has to describe the week
+/// structure to `validate` before any week exists.
+const int trainedBaseWeeks = 12;
+
+/// Share of *recorded* sessions the runner rated harder than prescribed.
+///
+/// Null when no session anywhere has a recorded effort — "no data" must not read
+/// as 0%, nor as a runner who trains everything too hard.
+///
+/// Lives here, and takes the week structure as arguments, because both
+/// `validate` and `PlanProgress` need it: `validate` runs *before* the plan
+/// exists, so the observation cannot be a method on a generated plan the way
+/// `easyFraction` is. This is the measured counterpart to that prescribed value,
+/// and it is the one thing per-week logging structurally cannot see — a week of
+/// "fine" is entirely compatible with running every easy day at threshold.
+double? observedIntensity({
+  required Map<String, WeekLog> weekLogs,
+  required int weekCount,
+  required DateTime Function(int weekIndex) weekStartFor,
+}) {
+  if (weekLogs.isEmpty) return null;
+  var hard = 0;
+  var recorded = 0;
+  for (var i = 0; i < weekCount; i++) {
+    final log = weekLogs[weekKey(weekStartFor(i))];
+    if (log == null) continue;
+    hard += log.hardSessionCount;
+    recorded += log.recordedSessionCount;
+  }
+  if (recorded == 0) return null;
+  return hard / recorded;
 }
 
 class PlanProgress {
@@ -265,4 +301,101 @@ class PlanProgress {
       sessionAdherence != null &&
       sessionAdherence! < 0.7 &&
       (averageDifficulty ?? 10) <= 5;
+
+  // -------------------------------------------------------------------------
+  // Per-session observations. A week-level difficulty of "fine" is compatible
+  // with running every easy day at threshold, so these are what make that
+  // visible.
+  // -------------------------------------------------------------------------
+
+  /// Sessions the runner recorded as harder than prescribed, across all logged
+  /// weeks.
+  int get hardSessionsRecorded {
+    var n = 0;
+    for (var i = 0; i < weekCount; i++) {
+      n += logFor(i).hardSessionCount;
+    }
+    return n;
+  }
+
+  /// Sessions with a recorded effort, across all logged weeks. The denominator
+  /// for [observedIntensityShare] — unrecorded sessions are unknown, not easy.
+  int get sessionsWithEffort {
+    var n = 0;
+    for (var i = 0; i < weekCount; i++) {
+      n += logFor(i).recordedSessionCount;
+    }
+    return n;
+  }
+
+  /// Share of recorded sessions that felt harder than prescribed. Null when
+  /// nothing has been recorded.
+  double? get observedIntensityShare {
+    final recorded = sessionsWithEffort;
+    if (recorded == 0) return null;
+    return hardSessionsRecorded / recorded;
+  }
+
+  /// Hard sessions that landed on a prescribed *quality* day, by week index.
+  ///
+  /// This is the signal that separates "your tempo is too much" from "your long
+  /// run is too much" — two problems with opposite fixes, which a single
+  /// week-level number cannot distinguish.
+  List<int> get hardQualityWeeks => _weeksWhereHardSession(
+        (w) => isQualityType(w.type),
+      );
+
+  /// Hard sessions that landed on a prescribed *easy* day, by week index.
+  ///
+  /// Running the easy days hard is the specific failure the 80/20 rule exists to
+  /// prevent, and it is invisible at week level.
+  List<int> get hardEasyWeeks =>
+      _weeksWhereHardSession((w) => w.zone.isEasy);
+
+  /// How many individual hard sessions landed on a quality day, across all
+  /// weeks. The unit the proposal threshold is set in, because a week can hold
+  /// two quality sessions and "three weeks" is not the same evidence as "three
+  /// hard sessions".
+  int get hardQualitySessionsRecorded =>
+      _countHardSessions((w) => isQualityType(w.type));
+
+  /// How many individual hard sessions landed on an easy day.
+  int get hardEasySessionsRecorded =>
+      _countHardSessions((w) => w.zone.isEasy);
+
+  List<int> _weeksWhereHardSession(bool Function(Workout) matches) {
+    final out = <int>[];
+    for (var i = 0; i < weekCount; i++) {
+      for (final s in logFor(i).sessions) {
+        if (!s.feltHard) continue;
+        final prescribed = _prescribedOn(plan.weeks[i], s.dayOfWeek);
+        if (prescribed != null && matches(prescribed)) {
+          out.add(i);
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
+  int _countHardSessions(bool Function(Workout) matches) {
+    var n = 0;
+    for (var i = 0; i < weekCount; i++) {
+      for (final s in logFor(i).sessions) {
+        if (!s.feltHard) continue;
+        final prescribed = _prescribedOn(plan.weeks[i], s.dayOfWeek);
+        if (prescribed != null && matches(prescribed)) n++;
+      }
+    }
+    return n;
+  }
+
+  /// The session the plan prescribed for [dayOfWeek], or null if it rests.
+  static Workout? _prescribedOn(PlanWeek week, int dayOfWeek) {
+    for (final w in week.workouts) {
+      if (w.type == WorkoutType.rest) continue;
+      if (w.weekday == dayOfWeek) return w;
+    }
+    return null;
+  }
 }

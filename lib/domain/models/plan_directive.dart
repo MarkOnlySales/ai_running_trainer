@@ -14,6 +14,7 @@ class PlanDirective {
   const PlanDirective({
     this.capVolume = false,
     this.targetDaysPerWeek,
+    this.suppressQuality = false,
   });
 
   /// Hold weekly volume flat from the first incomplete week onward.
@@ -28,19 +29,34 @@ class PlanDirective {
   /// the habit the plan is meant to be building stops existing.
   final int? targetDaysPerWeek;
 
-  bool get isEmpty => !capVolume && targetDaysPerWeek == null;
+  /// Remove the hard sessions, keeping everything else as planned.
+  ///
+  /// The answer to "my tempo is too much" when the long runs and easy days are
+  /// fine. `capVolume` cannot distinguish those two cases, because one difficulty
+  /// number for a week cannot say which session hurt — so it flattens the whole
+  /// block when only the quality work needed dropping.
+  ///
+  /// This only ever makes a week *easier*: it replaces hard sessions with easy
+  /// ones, which cannot push the 80/20 split the wrong way. The beginner base
+  /// block is a proven zero-quality plan, so the shape is known to be valid.
+  final bool suppressQuality;
+
+  bool get isEmpty =>
+      !capVolume && targetDaysPerWeek == null && !suppressQuality;
 
   bool get isNotEmpty => !isEmpty;
 
   PlanDirective copyWith({
     bool? capVolume,
     int? targetDaysPerWeek,
+    bool? suppressQuality,
     bool clearDays = false,
   }) {
     return PlanDirective(
       capVolume: capVolume ?? this.capVolume,
       targetDaysPerWeek:
           clearDays ? null : (targetDaysPerWeek ?? this.targetDaysPerWeek),
+      suppressQuality: suppressQuality ?? this.suppressQuality,
     );
   }
 
@@ -51,15 +67,19 @@ class PlanDirective {
               'weekly distance until you say so.',
         if (targetDaysPerWeek != null)
           'Training is set to $targetDaysPerWeek days a week.',
+        if (suppressQuality)
+          'The hard sessions have been removed. Everything else runs as planned.',
       ];
 
   Map<String, dynamic> toJson() => {
         'capVolume': capVolume,
         if (targetDaysPerWeek != null) 'targetDaysPerWeek': targetDaysPerWeek,
+        if (suppressQuality) 'suppressQuality': suppressQuality,
       };
 
   static PlanDirective fromJson(Map<String, dynamic> json) => PlanDirective(
         capVolume: json['capVolume'] == true,
         targetDaysPerWeek: (json['targetDaysPerWeek'] as num?)?.toInt(),
+        suppressQuality: json['suppressQuality'] == true,
       );
 }

@@ -11,6 +11,8 @@ import '../models/plan.dart';
 import '../models/profile.dart';
 import '../models/race.dart';
 import '../models/week_log.dart';
+import '../units.dart';
+import '../progress.dart';
 import 'fitness.dart';
 import 'riiegel.dart';
 
@@ -101,6 +103,64 @@ double? trainedFitnessAdjustment(Map<String, WeekLog> weekLogs) {
   );
 }
 
+/// Share of recorded sessions that must be rated hard before it is worth
+/// saying anything.
+///
+/// Demanding on purpose. A single hard session is a bad day — heat, poor sleep,
+/// a hard week at work. Half your sessions is a pattern, and half is also the
+/// point at which the 80/20 rule has stopped being true in practice however
+/// correct it is on paper.
+const double _observedIntensityThreshold = 0.5;
+
+/// How many recorded sessions are needed before the observation is worth raising.
+///
+/// Small samples are noise. Four sessions that all felt hard might be one
+/// weekend.
+const int _observedIntensityMinSessions = 8;
+
+/// Flags a runner who is consistently training harder than the plan asks.
+///
+/// This is the one thing per-week logging structurally cannot see. A week-level
+/// difficulty of "fine" is entirely compatible with running every easy day at
+/// threshold, and that is precisely how a plan stops being gentle while every
+/// headline number still looks correct.
+List<PlanFlag> _validateObservedIntensity(
+  Map<String, WeekLog> weekLogs,
+  int weekCount,
+  DateTime Function(int) weekStartFor,
+) {
+  final share = observedIntensity(
+    weekLogs: weekLogs,
+    weekCount: weekCount,
+    weekStartFor: weekStartFor,
+  );
+  if (share == null || share <= _observedIntensityThreshold) {
+    return const [];
+  }
+
+  var recorded = 0;
+  for (var i = 0; i < weekCount; i++) {
+    recorded += weekLogs[weekKey(weekStartFor(i))]?.recordedSessionCount ?? 0;
+  }
+  if (recorded < _observedIntensityMinSessions) return const [];
+
+  final pct = (share * 100).round();
+  return [
+    PlanFlag(
+      severity: FlagSeverity.caution,
+      title: '$pct% of your sessions felt harder than planned',
+      detail:
+          'This plan asks for most of its running to be easy, and that is what '
+          'makes the hard sessions work. When the easy days are run hard too, '
+          'nothing recovers, and the adaptation you are training for does not '
+          'happen.\n\n'
+          'It is worth checking whether the prescribed easy pace feels '
+          'uncomfortably slow. If it does, say so — the plan would rather be '
+          'adjusted than quietly ignored.',
+    ),
+  ];
+}
+
 /// Runs every safety check and returns the flags to surface.
 List<PlanFlag> validate({
   required RunnerProfile profile,
@@ -108,6 +168,8 @@ List<PlanFlag> validate({
   required GoalRace? goal,
   required DateTime today,
   Map<String, WeekLog> weekLogs = const {},
+  int weekCount = 0,
+  DateTime Function(int i)? weekStartFor,
 }) {
   final flags = <PlanFlag>[];
 
@@ -127,6 +189,10 @@ List<PlanFlag> validate({
   flags.addAll(_validateDate(goal, today, isBeginner, weeks));
   flags.addAll(_validateDistance(profile, goal, isBeginner));
   flags.addAll(_validateGoalTime(fitness, goal, weekLogs));
+  flags.addAll(_validateGoalAgainstLoggedEffort(fitness, goal));
+  if (weekStartFor != null) {
+    flags.addAll(_validateObservedIntensity(weekLogs, weekCount, weekStartFor));
+  }
 
   return flags;
 }
@@ -240,6 +306,59 @@ List<PlanFlag> _validateDistance(
           'on to run the marathon a season later, faster and uninjured. We have '
           'built the marathon plan anyway, but it is genuinely the harder road.',
       suggestedDistance: RaceDistance.half,
+    ),
+  ];
+}
+
+/// How much faster a goal pace may be than the pace already sustained at a
+/// logged heart rate before it is worth mentioning.
+///
+/// A goal is an ambition, and the whole point of this app is that it will build
+/// toward one, so a demanding target is not a problem in itself. The margin is
+/// set where a runner has clearly never held that pace at that effort — not at
+/// the first sign of a stretch.
+const double _effortCaveatMargin = 0.05;
+
+/// Flags a goal whose pace is well beyond what the runner has demonstrated at a
+/// recorded heart rate.
+///
+/// Arithmetic on the runner's own data — "you ran this pace at this bpm, and
+/// the goal is faster" — and not a claim about lactate or maximum heart rate,
+/// which a single race average cannot support. It can only ever *add a flag*;
+/// it never touches a pace.
+List<PlanFlag> _validateGoalAgainstLoggedEffort(
+  FitnessAssessment fitness,
+  GoalRace goal,
+) {
+  final withHr = fitness.races.where((r) => r.hasHr);
+  if (withHr.isEmpty) return const [];
+
+  // The most recent result with a heart rate, since that is the best evidence
+  // of what they can do right now.
+  final reference = withHr.first;
+  final logged = Pace.fromDuration(reference.time, reference.distance.metres);
+  final target = Pace.fromDuration(
+    goal.finishTimeGoal,
+    goal.distance.metres,
+  );
+
+  final demanded = (logged.secPerKm - target.secPerKm) / logged.secPerKm;
+  if (demanded <= _effortCaveatMargin) return const [];
+
+  final hr = reference.averageHr;
+  return [
+    PlanFlag(
+      severity: FlagSeverity.info,
+      title: 'Your goal pace is faster than you have run at $hr bpm',
+      detail:
+          'Your ${reference.distance.label} was ${formatDuration(reference.time)} '
+          'at $hr bpm, and a ${goal.distance.label} in '
+          '${formatDuration(goal.finishTimeGoal)} asks for a pace about '
+          '${(demanded * 100).round()}% faster than that. Holding $hr bpm would '
+          'not get you there, so expect this to feel harder than it looks on paper.\n\n'
+          'Nothing has changed — we build to the goal you asked for, and the '
+          'paces that result are safe either way. This is so the effort is not a '
+          'surprise on race day.',
     ),
   ];
 }

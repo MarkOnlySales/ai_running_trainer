@@ -41,6 +41,21 @@ class CoachProposal {
 /// the plan is meant to be building stops existing.
 const int _minimumTrainingDays = 3;
 
+/// Hard quality sessions needed before dropping quality work is suggested.
+///
+/// Deliberately as demanding as the volume cap. A single hard tempo is a bad
+/// day — heat, poor sleep, a hard week at work — and suggesting someone give up
+/// their threshold work over one would be the app nagging with extra steps. Three
+/// is where it stops being a bad day and becomes a miscalibration.
+const int _hardQualitySessionsToSuggest = 3;
+
+/// Hard *easy-day* sessions needed before anything is said about intensity.
+///
+/// Higher than the quality threshold on purpose. Running an easy day hard is a
+/// genuine mistake and worth naming, but the fix is usually "slow down" rather
+/// than "change the plan", so the bar for interrupting the runner is higher.
+const int _hardEasySessionsToSuggest = 4;
+
 List<CoachProposal> propose(PlanProgress progress) {
   final proposals = <CoachProposal>[];
 
@@ -55,6 +70,43 @@ List<CoachProposal> propose(PlanProgress progress) {
           'each run do the work. You can lift it whenever you want.',
       directive: const PlanDirective(capVolume: true),
       severity: FlagSeverity.warning,
+    ));
+  }
+
+  // The per-session answer to the same problem, and a more specific one: the
+  // volume cap is right when *everything* is hard, and wrong when only the hard
+  // sessions are. Offering both is safe precisely because neither applies itself.
+  final hardQuality = progress.hardQualitySessionsRecorded;
+  if (hardQuality >= _hardQualitySessionsToSuggest) {
+    proposals.add(CoachProposal(
+      id: 'drop-quality',
+      title: 'Drop the hard sessions, keep everything else',
+      rationale: 'The tempo and interval sessions in '
+          '${_weekList(progress.hardQualityWeeks)} came back harder than you '
+          'planned, while the rest of those weeks did not. That points at the '
+          'quality work rather than at your volume.\n\n'
+          'This removes the hard sessions and leaves your long run and easy days '
+          'exactly as they are. You keep all the running; you lose the part that '
+          'is not working. Put it back whenever it starts feeling right.',
+      directive: const PlanDirective(suppressQuality: true),
+      severity: FlagSeverity.caution,
+    ));
+  }
+
+  if (progress.hardEasySessionsRecorded >= _hardEasySessionsToSuggest) {
+    proposals.add(CoachProposal(
+      id: 'slow-down',
+      title: 'Your easy days are not being run easy',
+      rationale: '${_sessionCount(progress.hardEasySessionsRecorded)} of your '
+          'easy or recovery runs came back harder than planned. Most of this '
+          'plan is easy running, and that is not filler — it is what lets the '
+          'hard sessions work and what you actually adapt to.\n\n'
+          'Worth a try: the prescribed easy pace should feel '
+          'uncomfortably slow, to the point of feeling like you are going too '
+          'slow to be running. We have not changed anything, because this is '
+          'usually a pace to hold rather than a plan to change.',
+      directive: const PlanDirective(),
+      severity: FlagSeverity.info,
     ));
   }
 
@@ -79,6 +131,9 @@ List<CoachProposal> propose(PlanProgress progress) {
 
   return proposals;
 }
+
+/// Counts individual sessions rather than weeks, for the per-session proposals.
+String _sessionCount(int n) => '$n of your runs';
 
 String _weekList(List<int> weeks) {
   if (weeks.isEmpty) return 'no weeks';

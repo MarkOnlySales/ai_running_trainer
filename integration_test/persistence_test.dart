@@ -1,6 +1,7 @@
 import 'package:ai_running_trainer/app/controller.dart';
 import 'package:ai_running_trainer/app/storage.dart';
 import 'package:ai_running_trainer/domain/models/goal.dart';
+import 'package:ai_running_trainer/domain/models/plan.dart';
 import 'package:ai_running_trainer/domain/models/profile.dart';
 import 'package:ai_running_trainer/domain/models/race.dart';
 import 'package:ai_running_trainer/domain/models/week_log.dart';
@@ -420,6 +421,91 @@ void main() {
     expect(controller.races, isNotEmpty);
     expect(controller.progress!.completedCount, 0);
     expect(controller.startDate!.weekday, DateTime.monday);
+  });
+
+  testWidgets('per-session records survive an app restart', (tester) async {
+    final first = TrainerController(await TrainerStorage.open());
+    await first.completeOnboarding(
+      profile: const RunnerProfile(
+        name: 'Sessions',
+        age: 34,
+        gender: Gender.preferNotToSay,
+        monthsRunning: 36,
+        daysPerWeek: 4,
+        estimatedWeeklyKm: 40,
+      ),
+      races: [
+        RaceResult(
+          distance: RaceDistance.k10,
+          time: Duration(minutes: 44),
+          date: DateTime.now().subtract(const Duration(days: 20)),
+          averageHr: 168,
+        ),
+      ],
+      startDate: DateTime.now(),
+    );
+
+    final day = first.plan!.weeks.first.workouts
+        .firstWhere((w) => w.type == WorkoutType.tempo)
+        .weekday!;
+    await first.logSession(0, day, felt: SessionFelt.hard);
+
+    // Marking the week done is authoritative for the self-reported fields but
+    // must not discard what the runner recorded per session.
+    await first.markWeekComplete(0);
+
+    SharedPreferences.resetStatic();
+
+    final controller = TrainerController(await TrainerStorage.open());
+    await controller.init();
+
+    expect(controller.races.single.averageHr, 168);
+    final log = controller.progress!.logFor(0);
+    expect(log.completed, isTrue);
+    expect(log.sessions, hasLength(1));
+    expect(log.sessions.single.dayOfWeek, day);
+    expect(log.sessions.single.felt, SessionFelt.hard);
+  });
+
+  testWidgets('a heart rate does not change the regenerated plan', (tester) async {
+    // The guard, on device. `generate` is pure, so this holds anywhere — but it
+    // is worth proving through real storage that the field round-trips *and*
+    // still moves nothing.
+    Future<TrainingPlan> buildWith({required int? hr}) async {
+      final c = TrainerController(await TrainerStorage.open());
+      await c.completeOnboarding(
+        profile: const RunnerProfile(
+          name: 'Hr',
+          age: 34,
+          gender: Gender.preferNotToSay,
+          monthsRunning: 24,
+          daysPerWeek: 3,
+          estimatedWeeklyKm: 15,
+        ),
+        races: [
+          RaceResult(
+            distance: RaceDistance.k10,
+            time: Duration(minutes: 52, seconds: 25),
+            date: DateTime.now().subtract(const Duration(days: 2)),
+            averageHr: hr,
+          ),
+        ],
+        startDate: DateTime.now(),
+      );
+      return c.plan!;
+    }
+
+    final without = await buildWith(hr: null);
+    final with_ = await buildWith(hr: 168);
+    expect(with_.weekCount, without.weekCount);
+    expect(with_.paces.easy.secPerKm, without.paces.easy.secPerKm);
+    for (var i = 0; i < without.weeks.length; i++) {
+      expect(
+        with_.weeks[i].targetVolumeKm,
+        without.weeks[i].targetVolumeKm,
+        reason: 'week ${without.weeks[i].weekNumber}',
+      );
+    }
   });
 
   testWidgets('clearing storage returns the app to onboarding',

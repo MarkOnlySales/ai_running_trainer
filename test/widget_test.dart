@@ -1081,6 +1081,113 @@ void main() {
     });
   });
 
+  group('per-session effort', () {
+    testWidgets('the session sheet offers three states', (tester) async {
+      final controller = await loaded(
+        races: [k10(const Duration(minutes: 44))],
+        goal: marathonGoal(),
+      );
+      await tester.pumpWidget(app(controller));
+
+      final day = controller.plan!.weeks.first.workouts
+          .firstWhere((w) => w.type == WorkoutType.tempo)
+          .weekday!;
+      await tester.tap(find.text('Tempo').first);
+      await tester.pumpAndSettle();
+
+      for (final felt in ['easy', 'right', 'hard']) {
+        expect(
+          find.byKey(Key('felt-$day-$felt')),
+          findsOneWidget,
+          reason: felt,
+        );
+      }
+      expectNoLayoutError(tester);
+    });
+
+    testWidgets('one tap records the session', (tester) async {
+      final controller = await loaded(
+        races: [k10(const Duration(minutes: 44))],
+        goal: marathonGoal(),
+      );
+      await tester.pumpWidget(app(controller));
+
+      final day = controller.plan!.weeks.first.workouts
+          .firstWhere((w) => w.type == WorkoutType.tempo)
+          .weekday!;
+      await tester.tap(find.text('Tempo').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(Key('felt-$day-hard')));
+      await tester.pumpAndSettle();
+
+      final log = controller.progress!.logFor(0);
+      expect(log.sessions.single.dayOfWeek, day);
+      expect(log.sessions.single.felt, SessionFelt.hard);
+      expect(log.hardSessionCount, 1);
+      expectNoLayoutError(tester);
+    });
+
+    testWidgets('tapping a different state replaces the record',
+        (tester) async {
+      final controller = await loaded(
+        races: [k10(const Duration(minutes: 44))],
+        goal: marathonGoal(),
+      );
+      await tester.pumpWidget(app(controller));
+
+      final day = controller.plan!.weeks.first.workouts
+          .firstWhere((w) => w.type == WorkoutType.tempo)
+          .weekday!;
+      await tester.tap(find.text('Tempo').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(Key('felt-$day-hard')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(Key('felt-$day-easy')));
+      await tester.pumpAndSettle();
+
+      final sessions = controller.progress!.logFor(0).sessions;
+      expect(sessions.length, 1, reason: 'one day, one record');
+      expect(sessions.single.felt, SessionFelt.easy);
+    });
+
+    testWidgets('rest days are not recordable, and are not tappable',
+        (tester) async {
+      final controller = await loaded(
+        races: [k10(const Duration(minutes: 44))],
+        goal: marathonGoal(),
+      );
+      await tester.pumpWidget(app(controller));
+
+      // A rest day has nothing to feel anything about, so its card is inert and
+      // there is nothing to record against it.
+      await scrollTo(tester, find.text('Rest'));
+      expect(find.text('Rest'), findsWidgets);
+      final restCard = tester.widget<GestureDetector>(
+        find
+            .ancestor(
+              of: find.text('Rest').first,
+              matching: find.byType(GestureDetector),
+            )
+            .first,
+      );
+      expect(restCard.onTap, isNull);
+      expectNoLayoutError(tester);
+    });
+
+    testWidgets('the control fits at phone width', (tester) async {
+      final controller = await loaded(
+        races: [k10(const Duration(minutes: 44))],
+        goal: marathonGoal(),
+      );
+      await tester.pumpWidget(app(controller));
+      await tester.tap(find.text('Tempo').first);
+      await tester.pumpAndSettle();
+      expectNoLayoutError(tester);
+    });
+  });
+
   group('theme', () {
     testWidgets('uses the intended dark surfaces and brand', (tester) async {
       final controller = await loaded();

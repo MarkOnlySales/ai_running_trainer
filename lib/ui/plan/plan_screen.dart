@@ -167,7 +167,13 @@ class PlanScreen extends StatelessWidget {
             _SessionCard(
               workout: w,
               paces: plan.paces,
-              onTap: () => showSessionSheet(context, w, plan.paces),
+              onTap: () => showSessionSheet(
+                context,
+                w,
+                plan.paces,
+                weekIndex: index,
+                controller: controller,
+              ),
             ),
           ],
           SectionHeader(
@@ -863,7 +869,13 @@ class _WeekScreen extends StatelessWidget {
             _SessionCard(
               workout: w,
               paces: plan.paces,
-              onTap: () => showSessionSheet(context, w, plan.paces),
+              onTap: () => showSessionSheet(
+                context,
+                w,
+                plan.paces,
+                weekIndex: controller.currentWeekIndex,
+                controller: controller,
+              ),
             ),
           ],
         ],
@@ -1423,20 +1435,41 @@ class _PhaseLegend extends StatelessWidget {
 }
 
 /// Full detail for one session.
-void showSessionSheet(BuildContext context, Workout w, TrainingPaces paces) {
+///
+/// [weekIndex] and [controller] are optional: without them the sheet is purely a
+/// read-only reference, which is how it is used from the review screen.
+void showSessionSheet(
+  BuildContext context,
+  Workout w,
+  TrainingPaces paces, {
+  int? weekIndex,
+  TrainerController? controller,
+}) {
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (_) => _SessionSheet(workout: w, paces: paces),
+    builder: (_) => _SessionSheet(
+      workout: w,
+      paces: paces,
+      weekIndex: weekIndex,
+      controller: controller,
+    ),
   );
 }
 
 class _SessionSheet extends StatelessWidget {
-  const _SessionSheet({required this.workout, required this.paces});
+  const _SessionSheet({
+    required this.workout,
+    required this.paces,
+    this.weekIndex,
+    this.controller,
+  });
 
   final Workout workout;
   final TrainingPaces paces;
+  final int? weekIndex;
+  final TrainerController? controller;
 
   @override
   Widget build(BuildContext context) {
@@ -1513,6 +1546,14 @@ class _SessionSheet extends StatelessWidget {
                   style: theme.bodyMuted.copyWith(height: 1.5),
                 ),
               ),
+              if (weekIndex != null && controller != null) ...[
+                const SizedBox(height: AppSpacing.lg),
+                _FeltControl(
+                  weekIndex: weekIndex!,
+                  controller: controller!,
+                  workout: workout,
+                ),
+              ],
             ],
           ),
         ),
@@ -1539,3 +1580,132 @@ class _SessionSheet extends StatelessWidget {
           'RPE 9–10/10. Very hard and very short. Full recovery between reps.',
       };
 }
+
+/// One tap per session: how did it actually go?
+///
+/// Placed here, at the bottom of the sheet the runner already opens, rather than
+/// as a row of controls on the week itself. That is the whole design: one tap in
+/// a place they are already looking beats three controls they have to seek out.
+/// Anything more and it does not get done on a bad week, which is the only week
+/// the data matters on.
+///
+/// Three states, not a 1–10 slider. The week-level difficulty is a slider and
+/// it works, but a week is too coarse to say *which* session hurt — and the
+/// difference between "your tempo is too much" and "your long run is too much"
+/// is the difference between two opposite plans.
+class _FeltControl extends StatelessWidget {
+  const _FeltControl({
+    required this.weekIndex,
+    required this.controller,
+    required this.workout,
+  });
+
+  final int weekIndex;
+  final TrainerController controller;
+  final Workout workout;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final day = workout.weekday;
+    if (day == null || workout.type == WorkoutType.rest) {
+      return const SizedBox.shrink();
+    }
+
+    final recorded = controller
+        .logWeekFor(weekIndex)
+        .sessions
+        .where((s) => s.dayOfWeek == day)
+        .firstOrNull;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('HOW DID THAT GO?', style: theme.label),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            for (final f in SessionFelt.values) ...[
+              if (f != SessionFelt.values.first)
+                const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: _FeltButton(
+                  key: Key('felt-$day-${f.name}'),
+                  felt: f,
+                  selected: recorded?.felt == f,
+                  onTap: () => controller.logSession(weekIndex, day, felt: f),
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          recorded?.felt == null
+              ? 'Optional. It is what lets us tell the difference between a hard '
+                  'tempo and a hard long run.'
+              : 'Tap again to change it.',
+          style: theme.bodyMuted.copyWith(fontSize: 12),
+        ),
+      ],
+    );
+  }
+}
+
+class _FeltButton extends StatelessWidget {
+  const _FeltButton({
+    super.key,
+    required this.felt,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final SessionFelt felt;
+  final bool selected;
+  final VoidCallback onTap;
+
+  static String label(SessionFelt f) => switch (f) {
+        SessionFelt.easy => 'Easy',
+        SessionFelt.right => 'About right',
+        SessionFelt.hard => 'Hard',
+      };
+
+  /// Colour follows the zone ramp rather than introducing a new palette, so the
+  /// control reads as part of the same system.
+  static Color accent(SessionFelt f) => switch (f) {
+        SessionFelt.easy => ZonePalette.of(IntensityZone.easy),
+        SessionFelt.right => ZonePalette.of(IntensityZone.marathon),
+        SessionFelt.hard => ZonePalette.of(IntensityZone.threshold),
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = accent(felt);
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        height: 44,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? color.withValues(alpha: 0.16) : AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.control),
+          border: Border.all(
+            color: selected ? color : AppColors.hairlineStrong,
+          ),
+        ),
+        child: Text(
+          label(felt),
+          textAlign: TextAlign.center,
+          style: theme.body.copyWith(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+            color: selected ? color : AppColors.textSecondary,
+          ),
+        ),
+      ),
+    );
+  }
+}
+

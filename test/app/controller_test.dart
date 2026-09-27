@@ -1,6 +1,7 @@
 import 'package:ai_running_trainer/app/controller.dart';
 import 'package:ai_running_trainer/app/storage.dart';
 import 'package:ai_running_trainer/domain/models/goal.dart';
+import 'package:ai_running_trainer/domain/models/plan.dart';
 import 'package:ai_running_trainer/domain/models/profile.dart';
 import 'package:ai_running_trainer/domain/models/race.dart';
 import 'package:ai_running_trainer/domain/models/week_log.dart';
@@ -272,6 +273,151 @@ void main() {
       final clean2 = c.plan!.weeks[1].targetVolumeKm;
       await c.logWeek(0, const WeekLog(sessionsDone: 0));
       expect(c.plan!.weeks[1].targetVolumeKm, lessThan(clean2));
+    });
+  });
+
+  group('per-session logging', () {
+    test('logging a session records it against the week', () async {
+      final c = await controllerWith(races: _races(), goal: _goal());
+      final week = c.plan!.weeks.first;
+      final day = week.workouts
+          .firstWhere((w) => w.type != WorkoutType.rest)
+          .weekday!;
+
+      await c.logSession(0, day, felt: SessionFelt.hard);
+
+      final log = c.progress!.logFor(0);
+      expect(log.sessions.single.dayOfWeek, day);
+      expect(log.sessions.single.felt, SessionFelt.hard);
+      expect(log.hardSessionCount, 1);
+    });
+
+    test('logging a session is a record even before the week is marked done',
+        () async {
+      // Otherwise a week in progress would read as "nothing logged" to every
+      // rollup, and the observation would never be possible.
+      final c = await controllerWith(races: _races(), goal: _goal());
+      final day = c.plan!.weeks.first.workouts
+          .firstWhere((w) => w.type != WorkoutType.rest)
+          .weekday!;
+
+      await c.logSession(0, day, felt: SessionFelt.hard);
+
+      expect(c.progress!.logFor(0).completed, isFalse);
+      expect(c.progress!.logFor(0).sessionsWithEffort, 1);
+      expect(c.progress!.isComplete(0), isFalse);
+    });
+
+    test('re-logging a day replaces it rather than duplicating', () async {
+      final c = await controllerWith(races: _races(), goal: _goal());
+      final day = c.plan!.weeks.first.workouts
+          .firstWhere((w) => w.type != WorkoutType.rest)
+          .weekday!;
+
+      await c.logSession(0, day, felt: SessionFelt.hard);
+      await c.logSession(0, day, felt: SessionFelt.easy);
+
+      final sessions = c.progress!.logFor(0).sessions;
+      expect(sessions.length, 1);
+      expect(sessions.single.felt, SessionFelt.easy);
+      expect(c.progress!.logFor(0).hardSessionCount, 0);
+    });
+
+    test('clearing a session leaves the rest of the week alone', () async {
+      final c = await controllerWith(races: _races(), goal: _goal());
+      final days = c.plan!.weeks.first.workouts
+          .where((w) => w.type != WorkoutType.rest)
+          .map((w) => w.weekday!)
+          .toList();
+      await c.logSession(0, days.first, felt: SessionFelt.hard);
+      await c.logSession(0, days.last, felt: SessionFelt.easy);
+
+      await c.logSession(0, days.first, clearFelt: true);
+
+      final sessions = c.progress!.logFor(0).sessions;
+      expect(sessions.where((s) => s.feltHard), isEmpty);
+      expect(
+        sessions.where((s) => s.felt == SessionFelt.easy).length,
+        1,
+        reason: 'clearing one day must not take the other with it',
+      );
+    });
+
+    test('an out-of-range day or week is ignored', () async {
+      final c = await controllerWith(races: _races(), goal: _goal());
+      await c.logSession(0, 9, felt: SessionFelt.hard);
+      await c.logSession(99, 1, felt: SessionFelt.hard);
+      expect(c.progress!.logFor(0).sessions, isEmpty);
+    });
+
+    test('marking a week done keeps the session records', () async {
+      // The one deliberate exception to markWeekComplete being authoritative.
+      // A per-session record is what the runner actually did, and it is the
+      // most expensive data here to reproduce.
+      final c = await controllerWith(races: _races(), goal: _goal());
+      final day = c.plan!.weeks.first.workouts
+          .firstWhere((w) => w.type != WorkoutType.rest)
+          .weekday!;
+      await c.logSession(0, day, felt: SessionFelt.hard);
+
+      await c.markWeekComplete(0);
+
+      final log = c.progress!.logFor(0);
+      expect(log.completed, isTrue);
+      expect(log.sessions.single.felt, SessionFelt.hard,
+          reason: 'tapping "done" must not discard what was recorded');
+    });
+
+    test('marking a week done still clears the self-reported week fields',
+        () async {
+      // The half of "authoritative" that still holds: stale self-report goes.
+      final c = await controllerWith(races: _races(), goal: _goal());
+      await c.logWeek(
+        0,
+        const WeekLog(
+          completed: true,
+          difficulty: 9,
+          actualKm: 80,
+          sessionsDone: 1,
+        ),
+      );
+
+      await c.markWeekComplete(0);
+
+      final log = c.progress!.logFor(0);
+      expect(log.completed, isTrue);
+      expect(log.difficulty, isNull);
+      expect(log.actualKm, isNull);
+      expect(log.sessionsDone, isNull);
+    });
+
+    test('un-marking a week clears its sessions too', () async {
+      // Disowning the week disowns everything claimed about it.
+      final c = await controllerWith(races: _races(), goal: _goal());
+      final day = c.plan!.weeks.first.workouts
+          .firstWhere((w) => w.type != WorkoutType.rest)
+          .weekday!;
+      await c.logSession(0, day, felt: SessionFelt.hard);
+      await c.markWeekComplete(0);
+
+      await c.markWeekComplete(0, value: false);
+
+      expect(c.progress!.logFor(0).sessions, isEmpty);
+      expect(c.progress!.completedCount, 0);
+    });
+
+    test('sessions survive an app restart', () async {
+      final first = await controllerWith(races: _races(), goal: _goal());
+      final day = first.plan!.weeks.first.workouts
+          .firstWhere((w) => w.type != WorkoutType.rest)
+          .weekday!;
+      await first.logSession(0, day, felt: SessionFelt.hard);
+
+      SharedPreferences.resetStatic();
+
+      final second = TrainerController(await TrainerStorage.open());
+      await second.init();
+      expect(second.progress!.logFor(0).sessions.single.felt, SessionFelt.hard);
     });
   });
 

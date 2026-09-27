@@ -9,8 +9,8 @@ Only third-party dependency is `shared_preferences`; the typeface is bundled, no
 
 ```bash
 flutter pub get
-flutter test                        # 426 unit + widget, mocked storage
-flutter test integration_test -d emulator-5554   # 10 on-device, REAL storage
+flutter test                        # 482 unit + widget, mocked storage
+flutter test integration_test -d emulator-5554   # 12 on-device, REAL storage
 flutter analyze                     # must be clean
 flutter build web --release
 flutter build apk --profile         # NOT --debug, see Android notes
@@ -37,7 +37,7 @@ lib/
     onboarding/, plan/, profile/
   main.dart
 assets/fonts/       Barlow 400/500/600/700 + OFL.txt
-test/domain/        191 tests — the real suite
+test/domain/        the real suite — see per-file counts
 test/widget_test.dart  runs at 400x900
 ```
 
@@ -154,6 +154,62 @@ quality sessions while budgeting for one: 8 km more running than the plan claime
 `beginner_plan.dart` must call `applyDayConstraint` **before** computing the volume. `race_plan.dart`
 must route race weeks through `enforceSafety` too. `plan_test.dart` asserts
 `closeTo(targetVolumeKm, runVolumeKm)` across ten plan shapes — that assertion is the guard.
+
+## Heart rate is an annotation, never an input
+
+`RaceResult.averageHr` is `int?`, serialized only when present. It reaches **no** part of plan
+generation — not `vdotFor`, not `riiegel`, not `zoneAnchorPace`. Three notes come off it, all
+arithmetic on the runner's own data:
+
+- **Goal-realism caveat** (in `validation.dart`): their anchor race was run at pace X on HR H; if the
+  goal pace is >5% faster, say it will demand more than they have sustained. `FlagSeverity.info` only.
+- **Out-of-band sanity** (in `fitness.dart`): wide per-distance bounds, a 5K at 205 is a typo. Error
+  detection, not zone boundaries.
+- **Mixed devices**: some races with HR and some without is disclosed.
+
+**`test/domain/heart_rate_guard_test.dart` is the enforcement.** It asserts a plan generated with and
+without HR is identical — volumes, session distances, every zone's pace, VDOT, and the flag set. It
+was written *before* the field existed and has been verified to fail when HR is wired into
+`vdotFor`. The field's doc comment points at it. If you add a `plannedDistanceKm` to `Workout` and
+want the same guarantee, copy the pattern rather than trusting the comment.
+
+## Per-session logging, bounded by the plan
+
+`SessionLog { dayOfWeek, felt, actualKm? }` nested in `WeekLog`, **one per prescribed session, capped
+at `maxSessionsPerWeek` (7)**. Phase 5 rejected a per-run log as unbounded; that objection is about
+free-form history, not this. A 20-week block is ~140 records. `sessionsDone`/`actualKm` on `WeekLog`
+are **not** removed — `looksUnderserved` and `volumeAdherence` consume them.
+
+- **`Workout.weekday` exists so a session log can be matched to the session it refers to.** Without
+  it, "the tempo was hard" and "the long run was hard" are indistinguishable — two problems with
+  opposite fixes. Set by `attachWeekdays(workouts, pattern)` in `volume.dart`, once per generator,
+  because a new session type forgetting to attach its own day fails *silently*.
+  **`enforceSafety` rebuilds the long run and must carry `weekday` across** — losing it there would
+  detach a capped long run from its day, which is precisely the signal this feature produces.
+- **`markWeekComplete` keeps `sessions`.** It is still authoritative for the *self-reported* week
+  fields (`clearedForQuickDone`), because stale self-report is what makes the button unpredictable.
+  Per-session records are what the runner actually did and are the most expensive data here. Un-marking
+  still wipes everything.
+- **One three-state tap, in the session detail sheet** — a place the runner already opens. A row of
+  controls on the week itself would be 4–7 taps and would not get done on bad weeks.
+- **Unrecorded is neutral, never bad.** `observedIntensity` returns null when nothing is recorded.
+  `observedIntensity` lives in `progress.dart` (not `generate.dart`) because `validate` runs *before*
+  the plan exists and both callers need it — same shape as the existing `adherenceByWeek`.
+
+## `drop-quality`: a more specific answer than `cap-volume`
+
+`PlanDirective.suppressQuality` removes hard sessions and leaves long runs and easy days alone. It
+fires at **3+ individual hard quality sessions**, not 3 weeks — a week can hold two, and the two units
+are not the same evidence. Two hard days is a bad week, not a miscalibration.
+
+It is safe by construction: hard work becomes easy, so `easyFraction` can only rise. Asserted. Total
+weekly mileage may drift a couple of percent either way (the unsuppressed week loses volume to the cap
+that keeps quality shorter than the long run); the invariant tested is `hardVolumeKm == 0`, not an
+exact total.
+
+`slow-down` is informational and changes nothing — it fires at 4+ hard *easy-day* sessions and says
+the prescribed pace may be too fast, because that is usually a pace to hold rather than a plan to
+change.
 
 ## The 90% rule (reactive volume curve)
 
