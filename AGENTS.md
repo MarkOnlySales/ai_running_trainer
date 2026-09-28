@@ -290,6 +290,97 @@ Three consequences, all asserted in `test/domain/zone_anchor_regression_test.dar
   `goal == null && !hasData`, because the goal race supplied the anchor for a beginner with no race
   data. A goal is *not* a substitute for demonstrated fitness, so it is now `!hasData` outright.
 
+## The splash screen is one idea in four places, and `#0E0D0D` is in five
+
+The same logo-on-near-black appears on Android (pre-12 and 12+), iOS and the web. The artwork is
+generated **transparent** by `tool\generate_icons.ps1`; each platform composites it over the app's
+own base colour, so the background is declared once per platform rather than baked into the image.
+Baking it in is what would let four copies of "black" drift apart.
+
+| platform | artwork | background |
+|---|---|---|
+| Android <12 | `drawable/launch_background.xml` centred `<bitmap>` | `@color/splash_background` |
+| Android 12+ | `windowSplashScreenAnimatedIcon` = `@mipmap/ic_launcher` | `windowSplashScreenBackground` |
+| iOS | `LaunchImage` in `LaunchScreen.storyboard`, `contentMode="center"` | storyboard `backgroundColor` |
+| Web | `<img>` in `web\index.html` | CSS `background-color` |
+
+**`#0E0D0D` now appears in five files** and they must agree: `values/splash_background.xml`,
+`values-night/ic_launcher_background.xml`, `LaunchScreen.storyboard`, `web/index.html` (twice - the
+splash and `body`), and `web/manifest.json`'s `background_color`. Changing the base colour in
+`lib/ui/theme.dart` means changing all of them.
+
+**Three real bugs were fixed on the way, all of them "the template was never filled in":**
+
+- **`NormalTheme` used `?android:colorBackground` under a `Theme.Light` parent** - a *white* window
+  between the splash and Flutter's first frame, on a dark-only app. Both `values/` and
+  `values-night/` now use `Theme.Black` and `@color/splash_background`. They are deliberately
+  identical: the app is dark-only, so the system Dark Mode setting must not change what the runner
+  sees before the first frame.
+- **The iOS launch storyboard had a white `backgroundColor`.** A launch screen that does not match
+  the app is a review rejection waiting to happen.
+- **`web/index.html` had `<title>ai_running_trainer</title>`** - the *Dart package* name, not the app
+  name, and the template's "A new Flutter project." description. That is a sixth place the
+  user-visible name lives, which the five-place list in this file did not know about. The package
+  name is still correct and still must not be renamed; it is just not a user-visible string.
+
+**`postSplashScreenTheme` is deliberately absent from `values-v31`.** It belongs to
+`androidx.core.splashscreen`, which this project does not depend on, and adding it fails the
+resource link with `attr/postSplashScreenTheme not found`. Flutter's embedding already switches to
+`NormalTheme` itself, via the `io.flutter.embedding.android.NormalTheme` meta-data in
+`AndroidManifest.xml`. Hit this; do not add the dependency for it.
+
+**The web splash is dismissed on Flutter's `flutter-first-frame` event, not a timer.** This was
+checked rather than assumed: the string is genuinely dispatched in the compiled bundle
+(`initEvent("flutter-first-frame",!0,!0)` then `dispatchEvent` on `window`), so a
+`setTimeout` would have been a race. The 8s timeout is a *backstop* only, because a splash left
+covering a working app is worse than no splash at all. The web build has no platform splash of its
+own, so without this the runner stares at a blank dark rectangle for the whole engine boot.
+
+**The generator verifies splash transparency** (corner alpha must be 0). Opaque splash art would
+render as a dark rectangle sitting on the background rather than on it - the right colour, still
+visibly wrong.
+
+## Icons are generated from one master, never hand-edited
+
+`assets/logo/mobile-logo.png` is the only artwork. `tool\generate_icons.ps1` produces every
+launcher and app icon from it. **Change the master and re-run; never edit a file under
+`web\icons`, `android\...\mipmap-*`, or the iOS `AppIcon.appiconset`.**
+
+```bash
+powershell -ExecutionPolicy Bypass -File tool\generate_icons.ps1
+```
+
+The source is an opaque 1254x1254 PNG with its near-black background baked in and **no alpha
+channel**, so a plain resize is wrong in three separate ways:
+
+- **It is off-centre** - the artwork sits at L=147 R=112 T=227 B=292, so anything that trusts
+  the canvas is visibly off-balance.
+- **Android 8+ uses adaptive icons.** The launcher crops to a shape chosen by the user's theme,
+  and only the central 66.7% of the 108dp canvas is guaranteed visible. A raw square loses the
+  runner's arms and the bar chart. Hence `mipmap-anydpi-v26/ic_launcher.xml`, a
+  `ic_launcher_foreground` per density, and a solid `@color/ic_launcher_background`.
+- **Web maskable icons** have the same problem at an 80% safe zone.
+
+So the script flood-fills the background away **from the border** (a colour threshold would punch
+holes in dark interior detail; a flood fill can only reach what is connected to the outside),
+measures the artwork, feathers the alpha with one 3x3 box blur - the binary fill otherwise keeps
+the source's hard staircase when scaled to 48px - and re-composites it centred on the app's own
+`#0E0D0D` rather than the source's `#070707`, so the icon does not introduce a second "black".
+
+**The adaptive artwork is placed at 0.62, not the 0.667 the spec guarantees.** The artwork is
+1.35:1 so width is the limiting dimension, and at 0.667 it lands *exactly* on the safe-zone edge
+and touches the launcher mask. Some OEM launchers crop past the spec, and the outermost speed
+lines are the first thing lost. Verified on the emulator: the mask is a circle, everything inside.
+
+**iOS icons must have no alpha channel at all.** App Store Connect rejects an icon that merely
+*has* one, even when every pixel is opaque. Clearing to an opaque colour on a 32bpp canvas still
+leaves the channel, so the pixel format has to be `Format24bppRgb` chosen up front. The first
+version of the script got this wrong and the verification pass caught it.
+
+The script **verifies its own output** and exits non-zero on: any iOS icon with an alpha channel,
+adaptive artwork escaping the safe zone, or a non-square icon. A generator that cannot fail is not
+a generator.
+
 ## What a goal may and may not change
 
 **Found via a real report.** A runner set a 21K goal, saw no change to their sessions, removed it, and

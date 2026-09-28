@@ -66,6 +66,12 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # App logo. This is the single master for the artwork; every launcher and
+  # app icon is generated from it by tool\generate_icons.ps1 - do not hand-edit
+  # anything under web\icons, android\...\mipmap-*, or the iOS AppIcon set.
+  assets:
+    - assets/logo/mobile-logo.png
+
   # Barlow (SIL Open Font License 1.1, see assets/fonts/OFL.txt).
   #
   # Bundled rather than fetched through google_fonts: it keeps the

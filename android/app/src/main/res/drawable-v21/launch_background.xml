@@ -1,12 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
+<!--
+  Launch splash for Android 11 and below, API 21+.
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
+  Identical to the drawable/ version. Flutter's template keeps a -v21 copy
+  because older platforms lack some attributes; the layer-list here does not use
+  any of them, so the two must stay in step. Change both together.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_background" />
+
+    <item>
         <bitmap
             android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+            android:src="@drawable/launch_logo" />
+    </item>
 </layer-list>
