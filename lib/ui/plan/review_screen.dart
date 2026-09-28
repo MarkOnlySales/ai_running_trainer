@@ -55,11 +55,11 @@ class ReviewScreen extends StatelessWidget {
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(
+        padding: EdgeInsets.fromLTRB(
           AppSpacing.md,
           AppSpacing.md,
           AppSpacing.md,
-          AppSpacing.xl,
+          AppSpacing.scrollBottom(context),
         ),
         children: [
           _Summary(plan: plan, onEditGoal: () => _editGoal(context)),

@@ -88,6 +88,19 @@ abstract final class AppSpacing {
   static const md = 16.0;
   static const lg = 24.0;
   static const xl = 32.0;
+
+  /// Bottom padding for a scrolling screen body.
+  ///
+  /// A fixed [xl] is measured from the bottom of the *screen*, so on a device
+  /// with a gesture bar or a home indicator the last stretch of it sits beneath
+  /// the system navigation and the final component is clipped. A Samsung A35 is
+  /// ~384x832dp, which is *shorter* than the 400x900 widget surface, so the test
+  /// suite cannot see this at all — the last card simply fell off.
+  ///
+  /// Every scrolling body uses this rather than a literal, because four screens
+  /// had the same fixed value and would otherwise drift apart again.
+  static double scrollBottom(BuildContext context) =>
+      xl + MediaQuery.viewPaddingOf(context).bottom;
 }
 
 abstract final class AppRadius {

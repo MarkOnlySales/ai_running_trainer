@@ -195,10 +195,13 @@ TrainingPaces _beginnerPaces({
   required FitnessAssessment fitness,
   required GoalRace? goal,
 }) {
-  // A brand-new runner may have neither a goal nor a single race result, in
-  // which case there is nothing to anchor on. Fall back to a modest
-  // assumed aerobic base rather than refusing to build a plan.
-  if (goal == null && !fitness.hasData) {
+  // A runner with no race result has no demonstrated fitness, and **a goal is
+  // not a substitute for one**. This used to be `goal == null && !hasData`,
+  // because the goal race supplied the anchor; now that it does not, a beginner
+  // who set a goal would fall through and throw. The assumed base below is the
+  // honest answer: we do not know what this runner can do yet, and a goal is
+  // what they intend rather than what they have shown.
+  if (!fitness.hasData) {
     return applyBeginnerPaceFloor(
       pacesFromMarathonPace(const Pace(defaultBeginnerMarathonEquivalentSecPerKm)),
     );

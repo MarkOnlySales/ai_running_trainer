@@ -66,14 +66,30 @@ TrainingPaces pacesFromMarathonPace(Pace marathonPace) => TrainingPaces(
 
 /// The anchor pace zones should be built from.
 ///
-/// Preference order:
-///  1. The goal race pace, when a goal is set — this is the point of the app.
-///  2. The equivalent marathon pace implied by current fitness, derived
-///     through Riegel from the runner's best recent race.
+/// **Always current fitness.** The goal race used to be the preferred anchor, on
+/// the reasoning that you train relative to the race you are preparing for. That
+/// is right for an achievable goal and actively harmful for a stretch one: see
+/// `test/domain/zone_anchor_regression_test.dart`.
 ///
-/// When the goal distance is not a marathon, its pace is still the correct
-/// anchor: the zone *offsets* are defined relative to marathon-equivalent
-/// effort, and a 10K or half goal supplies its own reference point.
+/// **Always current fitness.** The goal race used to be the preferred anchor,
+/// on the reasoning that you train relative to the race you are preparing for.
+///
+/// That is right for an achievable goal and actively harmful for a stretch one.
+/// A runner with a 52:25 10K who set a 49:00 goal — a 6.7% improvement — got a
+/// ladder anchored on 4:54/km, which put threshold at 4:17 and interval at
+/// 4:01: roughly 12 s/km faster than their demonstrated fitness supports. The
+/// app flagged the goal as a stretch and then built the training as though it
+/// had already been achieved.
+///
+/// It also collapsed the ladder. Anchoring 52 s/km too fast moved every zone by
+/// the same amount, so easy ended up only 27 s/km from threshold instead of ~50.
+/// A runner whose "easy" is 27 s from threshold is running everything hard, and
+/// the 80/20 rule becomes arithmetically unreachable.
+///
+/// So: zones come from what the runner can demonstrably do today. The goal
+/// shapes the *plan* — block length, volume curve, taper, race-week pacing — all
+/// of which remain goal-driven. What it does not do is raise the intensity of the
+/// Tuesday session above what the athlete can currently sustain.
 Pace zoneAnchorPace({
   required RaceDistance? goalDistance,
   required Duration? goalFinishTime,
@@ -81,9 +97,6 @@ Pace zoneAnchorPace({
   required RaceDistance? anchorRaceDistance,
   required Duration? anchorRaceTime,
 }) {
-  if (goalDistance != null && goalFinishTime != null) {
-    return Pace.fromDuration(goalFinishTime, goalDistance.metres);
-  }
   if (equivalentMarathonTime != null) {
     return Pace.fromDuration(equivalentMarathonTime, 42197.5);
   }
@@ -95,3 +108,13 @@ Pace zoneAnchorPace({
   }
   throw StateError('Cannot derive a zone anchor without any race data.');
 }
+
+/// Smallest gap, in seconds per km, that must separate **easy from threshold**.
+///
+/// Not a general minimum for every adjacent pair. In the published offsets
+/// recovery sits ~12 s/km from easy and interval ~16 s/km from threshold — those
+/// are deliberate neighbours, and treating them as violations would be inventing
+/// a rule the source never had. The easy→threshold gap is ~87 s/km, and it is the
+/// one that separates conversational running from working; a runner whose easy is
+/// 27 s/km from threshold is running everything hard.
+const int minZoneGapSeconds = 60;

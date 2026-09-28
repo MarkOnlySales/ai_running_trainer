@@ -9,7 +9,7 @@ Only third-party dependency is `shared_preferences`; the typeface is bundled, no
 
 ```bash
 flutter pub get
-flutter test                        # 501 unit + widget, mocked storage
+flutter test                        # 542 unit + widget, mocked storage
 flutter test integration_test -d emulator-5554   # 12 on-device, REAL storage
 flutter analyze                     # must be clean
 flutter build web --release
@@ -250,6 +250,145 @@ Still open, unchanged by this fix:
   beginner-block "zero quality is safe" property covers a *starting* block, not an end state for a
   trained runner.
 - **No 400m or 1000m rep formats** — `intervalRep`/`intervalRecovery` are hardcoded to 3 min / 3 min.
+
+## Zone anchor is CURRENT FITNESS, never the goal race pace — reversed
+
+**Found via a real report.** A runner with a 52:25 10K, a 1:56:10 half and a 49:00 10K goal — a
+6.7% improvement — was given threshold at 4:17/km and intervals at 4:01/km, and reported that
+recovery (5:56) and easy (5:44) "are already a tempo run for me". All four numbers were correct.
+
+**Cause:** zones were anchored on the *goal race pace*, a documented decision ("you train relative
+to the race you are preparing for"). For a stretch goal that is actively harmful. Anchoring on
+4:54/km shifted **every zone by the same −52 s/km**, so:
+
+| zone | goal-anchored (was) | fitness-anchored (now) |
+|---|---|---|
+| recovery | 5:56 | 6:48 |
+| easy | 5:44 | 6:36 |
+| threshold | 4:17 | 5:09 |
+| interval | 4:01 | 4:53 |
+
+Threshold landed 12 s/km faster than a VDOT 38 athlete can sustain, and the easy→threshold gap
+**collapsed from 87 s/km to 27**. That collapse is why easy felt like tempo: a runner whose easy is
+27 s/km from threshold is running everything hard, and 80/20 becomes arithmetically unreachable.
+The app flagged the goal `[caution] A stretch goal: 7% faster` and then built the training as though
+it had been achieved.
+
+**Now:** `zoneAnchorPace` ignores `goalDistance`/`goalFinishTime` entirely and always anchors on
+fitness. The goal still shapes block length, volume curve, taper and race-week pacing — it just
+cannot raise the intensity of a Tuesday session above what the athlete can currently sustain.
+
+Three consequences, all asserted in `test/domain/zone_anchor_regression_test.dart`:
+
+- **Absolute values, not just gaps.** A uniform shift preserves every *relative* relationship, so
+  gap tests alone cannot catch this. The test asserts the ladder equals the published offsets applied
+  to the fitness anchor exactly.
+- **`minZoneGapSeconds` applies only to easy→threshold.** Recovery/easy (~12 s/km) and
+  threshold/interval (~16 s/km) are deliberate neighbours in the source offsets; asserting a minimum
+  there would invent a rule the ladder never had.
+- **`derivePaces` no longer needs a goal to build one.** It used to be
+  `goal == null && !hasData`, because the goal race supplied the anchor for a beginner with no race
+  data. A goal is *not* a substitute for demonstrated fitness, so it is now `!hasData` outright.
+
+## What a goal may and may not change
+
+**Found via a real report.** A runner set a 21K goal, saw no change to their sessions, removed it, and
+saw no change again. Same paces, same distances. Read as broken. Two of the three things they noticed
+are **correct**; one was a bug.
+
+- **Paces must not change with the goal.** This is the zone-anchor rule, stated at the plan level. A
+  goal that raises a Tuesday session above what the athlete can currently sustain is precisely how a
+  stretch goal produces a plan that is too hard. `test/domain/goal_changes_the_plan_test.dart` pins
+  all five zones as *identical* with and without a goal, because "the paces moved" is the exact
+  symptom a runner reports as "it got harder when I added a race".
+- **The first four weeks are identical either way.** Both blocks open with the same base build. The
+  goal's real effects are block length (12 -> 17 weeks here) and everything from week 5 on:
+  specific phase, intervals, peak, taper, and a race week that actually prescribes the race. The
+  opening week matching is what generated the report, so the divergence point is *asserted* at
+  index 4 - if a future change moves it, that is a decision to make consciously.
+- **The notes were duplicated, and that was a real bug.** `validate` added one flag per
+  `fitness.notes` entry, all titled "About your race data", so two notes rendered as two
+  identically-titled cards stacked on top of each other. The runner's own data produced exactly two.
+  Notes are one card joined by blank lines now. This was latent for a long time and only became
+  visible when the measured-beats-projected note added a second one.
+
+**Corollary, learned the hard way: "longest race wins" only applies *within* the freshness
+window.** The reported runner's races, aged at 28 Sep 2026: 5K 19:50 (62d), 10K 42:02 (243d), 21K
+1:35:34 (31d), 42K 3:23:26 (335d). The 10K and marathon are both outside the 183-day window, so the
+**half anchors the plan** and the marathon is discarded with a note saying so. Reading "longest race
+wins" off the comment alone gives the wrong answer here, and an earlier diagnosis in this same
+report did exactly that.
+
+Worth knowing: the anchor barely mattered to the *paces* (the half projects to a 3:19 marathon
+equivalent against the real 3:23, so the ladder moves ~4 s/km). The stale data costs this runner
+almost nothing in training pace. What it does cost is the 10K expectation, which falls back to a
+projection because their 42:02 PB is 8 months old - the measured-beats-projected fix deliberately
+does not reach across the freshness boundary.
+
+## A prediction must never contradict a measurement
+
+**Found via a real report.** A runner set a 10K goal of **42:00** with a PB of **42:02** from three
+days earlier - a two-second target, no improvement at all. The app said:
+
+> On your race times, you would expect around 44 for a 10K. 5% is at the hard end of what a
+> training block delivers for this distance.
+
+**Cause:** `assessFitness` picks the **longest** fresh race as the anchor, then built *every*
+equivalent by projecting from it - including distances the runner had actually run. The marathon
+(3:23:26) anchored the plan, and Riegel projected **44:13** for the 10K, overwriting the real
+**42:02**. The goal check then scored 42:00 against 44:13 as a 4.6% stretch.
+
+**Why the projection is systematically wrong in this direction.** `conservativeMargin` only
+applies when *stretching out* (`ratio > 1.25`); Riegel going **down** in distance gets no margin
+because it is already pessimistic. So the longest-race anchor reliably **overstates** short
+distances. A marathon implies a 10K several percent slower than most runners actually manage.
+
+**The rule:** a time the runner ran at distance `d` is a fact about `d`; a projection from a
+different race is a guess about it. `equivalents[d]` now takes the freshest real result when one
+exists in the freshness window, and projects only for distances with no result of their own.
+
+- **The anchor is unchanged.** Choosing a different anchor is a separate decision with a much
+  larger blast radius - it drives VDOT and therefore every pace in the plan. A test pins that the
+  marathon is still the anchor so this fix cannot quietly make that change.
+- **Disclosed, not silently corrected.** When a measurement and the projection disagree by more
+  than 1%, a note says so. The file's existing rule is that the runner is told rather than left to
+  wonder.
+- **`test/domain/measured_beats_projected_test.dart`** is the guard: expectation, the equivalent,
+  the absence of a stretch flag, and that a genuinely ambitious goal (38:00) is *still* flagged so
+  the warning is corrected rather than silenced. It was verified to fail first, and the captured
+  failure text reproduced the report verbatim.
+
+**A formatting detail that hid this:** `_fmt` prints `44:13` as plain **"44"** - it only carries
+seconds past an hour. A test asserting on `"44:"` never matches. Assert on the derived value.
+
+## Bottom padding must account for the system nav bar
+
+**Found on a real Samsung A35, invisible to the whole suite.** Scrolling bodies used a flat
+`AppSpacing.xl` (32px) of bottom padding, measured from the bottom of the *screen*. On a device with
+a home indicator or button bar the last stretch of that sits beneath the system navigation, so the
+final component is clipped — the week strip's numbers, in this case.
+
+**Why no test caught it, and why the first fix I tried also proved nothing:**
+
+- The suite runs at **400x900**. An A35 is ~**384x832** — *shorter*. Nothing in the suite was ever
+  short enough for the crop to appear.
+- 32px happens to clear a **24dp** gesture bar, which is why the crop looked navigation-mode-specific.
+  One UI's three-button bar is ~**48dp**, and 32 < 48.
+- My first guard test asserted against a 24dp inset, so it **passed with the bug present**. A test
+  that cannot fail is not a test. It is now bound to a single `navBar` constant used for both the
+  fake inset and the assertion, and it was verified to fail first: tile bottom `800` where `784` was
+  required, padding `32` where `80` was required.
+
+**`AppSpacing.scrollBottom(context)`** adds `MediaQuery.viewPaddingOf(context).bottom` to the base
+padding, and every scrolling body uses it. Four screens carried the same literal and would
+otherwise drift apart again.
+
+## Date pickers start at today
+
+Both defaults pre-selected a date the runner then had to scroll *out of*, which reads as though the
+app picked the date for them: a race result opened 60 days in the past ("2 months ago" on screen),
+and a new goal race opened 126 days ahead. Both are now `DateTime.now()`. The pickers' own
+`firstDate`/`lastDate` already bracketed today, so this needed no supporting change.
 
 ## The 90% rule (reactive volume curve)
 

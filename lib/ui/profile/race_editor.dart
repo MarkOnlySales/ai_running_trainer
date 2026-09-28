@@ -55,7 +55,11 @@ class _RaceEditorState extends State<RaceEditor> {
       _hrs[d]?.dispose();
       _times[d] = TextEditingController();
       _hrs[d] = TextEditingController();
-      _dates[d] = DateTime.now().subtract(const Duration(days: 60));
+      // Today, not two months ago. The date picker's `lastDate` is today, so
+      // defaulting further back made the control open on a month the runner had
+      // to scroll forward out of, and it read as though the app had decided when
+      // they raced.
+      _dates[d] = DateTime.now();
     }
     for (final r in widget.value) {
       _times[r.distance]!.text = formatTimeInput(r.time);

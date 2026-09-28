@@ -9,7 +9,9 @@ import 'package:ai_running_trainer/main.dart';
 import 'package:ai_running_trainer/ui/onboarding/onboarding_screen.dart';
 import 'package:ai_running_trainer/ui/plan/plan_screen.dart';
 import 'package:ai_running_trainer/ui/plan/details_screen.dart';
+import 'package:ai_running_trainer/ui/goal/goal_editor.dart';
 import 'package:ai_running_trainer/ui/plan/review_screen.dart';
+import 'package:ai_running_trainer/ui/profile/race_editor.dart';
 import 'package:ai_running_trainer/ui/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -1285,6 +1287,167 @@ void main() {
 
       final counter = tester.widget<Counter>(find.byKey(const Key('profile-years')));
       expect(counter.value, 2, reason: '18 months displays as 2 years');
+    });
+  });
+
+  group('a short phone with a system nav bar', () {
+    // A Samsung A35 is ~384x832dp, which is *shorter* than the 400x900 surface
+    // every other test here uses, and One UI's three-button bar is ~48dp deep.
+    // That combination is why the week strip was cropped on the device and
+    // invisible to every test: nothing in the suite was ever short enough, and
+    // a flat 32px of bottom padding happened to clear a 24dp gesture bar but
+    // not a 48dp button bar.
+    const a35Height = 832.0;
+    const navBar = 48.0;
+
+    Future<void> useA35(WidgetTester tester) async {
+      final view = TestWidgetsFlutterBinding.ensureInitialized()
+          .platformDispatcher
+          .views
+          .first;
+      view.physicalSize = const Size(384, a35Height);
+      view.devicePixelRatio = 1.0;
+      view.viewPadding = const FakeViewPadding(bottom: navBar);
+      addTearDown(() {
+        view.resetPhysicalSize();
+        view.resetDevicePixelRatio();
+        view.resetViewPadding();
+      });
+    }
+
+    /// Scrolls to the very end and returns the bottom edge of [finder] in
+    /// logical pixels, measured from the top of the screen.
+    Future<double> bottomEdgeWhenScrolledToEnd(
+      WidgetTester tester,
+      Finder finder,
+    ) async {
+      await tester.fling(find.byType(Scrollable).first, const Offset(0, -4000), 4000);
+      await tester.pumpAndSettle();
+      return tester.getBottomLeft(finder).dy;
+    }
+
+    testWidgets('the week strip clears the system nav bar at the end of the scroll',
+        (tester) async {
+      await useA35(tester);
+      final controller = await loaded(
+        races: [k10(const Duration(minutes: 45))],
+        goal: marathonGoal(),
+      );
+      await tester.pumpWidget(app(controller));
+
+      final bottom = await bottomEdgeWhenScrolledToEnd(
+        tester,
+        find.byKey(const Key('week-tile-0')),
+      );
+      expect(
+        bottom,
+        lessThanOrEqualTo(a35Height - navBar),
+        reason: 'the week numbers sit under the system navigation at $bottom',
+      );
+    });
+
+    testWidgets('and there is still visible space beneath them',
+        (tester) async {
+      await useA35(tester);
+      final controller = await loaded(
+        races: [k10(const Duration(minutes: 45))],
+        goal: marathonGoal(),
+      );
+      await tester.pumpWidget(app(controller));
+
+      final bottom = await bottomEdgeWhenScrolledToEnd(
+        tester,
+        find.byKey(const Key('week-tile-0')),
+      );
+      expect(
+        bottom,
+        lessThanOrEqualTo(a35Height - navBar - 8),
+        reason: 'the last component is flush against the system bar',
+      );
+      expectNoLayoutError(tester);
+    });
+
+    testWidgets('the scroll padding actually accounts for the inset',
+        (tester) async {
+      // Asserts the mechanism, not just the outcome, so a future screen cannot
+      // quietly go back to a literal 32.
+      await useA35(tester);
+      final controller = await loaded(
+        races: [k10(const Duration(minutes: 45))],
+        goal: marathonGoal(),
+      );
+      await tester.pumpWidget(app(controller));
+      final list = tester.widget<ListView>(find.byType(ListView).first);
+      expect((list.padding! as EdgeInsets).bottom, AppSpacing.xl + navBar);
+    });
+  });
+
+  group('date pickers start where the runner is', () {
+    // Both defaults used to pre-select a date the runner had to scroll out of:
+    // race results opened two months in the past, and a new goal opened 126
+    // days ahead. Both read as though the app had decided the date for them.
+    String today() {
+      final n = DateTime.now();
+      return '${n.day}/${n.month}/${n.year}';
+    }
+
+    testWidgets('a race result defaults to today', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.dark(),
+        home: Scaffold(
+          body: ListView(
+            children: [
+              RaceEditor(value: const [], onChanged: (_) {}),
+            ],
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      // The visible label is the honest thing to assert on: it read
+      // "2 months ago" when the default was 60 days back, which is exactly
+      // the "it defaults to July" report.
+      final k5 = find.byKey(const Key('race-field-k5'));
+      await scrollTo(tester, k5);
+      expect(
+        find.text('Recent'),
+        findsNWidgets(RaceDistance.values.length),
+        reason: 'every distance defaults to today, so all read as recent',
+      );
+      expect(
+        find.textContaining('months ago'),
+        findsNothing,
+        reason: 'nothing should be pre-dated into the past',
+      );
+
+      await tester.tap(find.descendant(
+        of: k5,
+        matching: find.byIcon(Icons.edit_calendar_outlined),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byType(DatePickerDialog), findsOneWidget);
+    });
+
+    testWidgets('a new goal race defaults to today', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: AppTheme.dark(),
+        home: Scaffold(
+          body: ListView(
+            children: [
+              GoalEditor(value: null, onChanged: (_) {}),
+            ],
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('10K'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(today()),
+        findsWidgets,
+        reason: 'a goal date should start at today, not six months out',
+      );
     });
   });
 

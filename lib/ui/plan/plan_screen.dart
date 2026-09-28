@@ -83,11 +83,11 @@ class PlanScreen extends StatelessWidget {
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(
+        padding: EdgeInsets.fromLTRB(
           AppSpacing.md,
           AppSpacing.md,
           AppSpacing.md,
-          AppSpacing.xl,
+          AppSpacing.scrollBottom(context),
         ),
         children: [
           if (progress.missedWeekCount > 0) ...[
@@ -801,11 +801,11 @@ class _WeekScreen extends StatelessWidget {
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(
+        padding: EdgeInsets.fromLTRB(
           AppSpacing.md,
           AppSpacing.md,
           AppSpacing.md,
-          AppSpacing.xl,
+          AppSpacing.scrollBottom(context),
         ),
         children: [
           Container(

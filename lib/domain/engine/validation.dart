@@ -173,11 +173,18 @@ List<PlanFlag> validate({
 }) {
   final flags = <PlanFlag>[];
 
-  for (final note in fitness.notes) {
+  // Every data-quality note goes into **one** flag, not one flag each.
+  //
+  // This used to add a flag per note, all with the identical title "About your
+  // race data", so a runner with two notes saw two identically-titled cards and
+  // reasonably concluded the app had duplicated itself. The notes are not
+  // separately actionable either — they are all the same category of "here is
+  // what we did with your data" — so one card is the honest shape.
+  if (fitness.notes.isNotEmpty) {
     flags.add(PlanFlag(
       severity: FlagSeverity.info,
       title: 'About your race data',
-      detail: note,
+      detail: fitness.notes.join('\n\n'),
     ));
   }
 

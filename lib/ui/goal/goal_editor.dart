@@ -57,7 +57,11 @@ class _GoalEditorState extends State<GoalEditor> {
   void _seed() {
     final v = widget.value;
     if (v == null) {
-      final d = DateTime.now().add(const Duration(days: 126));
+      // Today. The goal is almost never a year out, and the picker's `firstDate`
+      // is today, so defaulting 126 days ahead meant the control opened on a
+      // month the runner then had to scroll backwards out of — reading as though
+      // the app had picked a race date for them.
+      final d = DateTime.now();
       setState(() {
         _distance = null;
         _date = DateTime(d.year, d.month, d.day);

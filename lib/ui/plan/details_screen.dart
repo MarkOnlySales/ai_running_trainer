@@ -74,11 +74,11 @@ class DetailsScreen extends StatelessWidget {
         ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(
+        padding: EdgeInsets.fromLTRB(
           AppSpacing.md,
           AppSpacing.md,
           AppSpacing.md,
-          AppSpacing.xl,
+          AppSpacing.scrollBottom(context),
         ),
         children: [
           const SectionHeader('About you'),
@@ -511,12 +511,12 @@ Future<void> showDetailsEditor(
           ),
         ),
         body: ListView(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            AppSpacing.md,
-            AppSpacing.md,
-            AppSpacing.xl,
-          ),
+          padding: EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          AppSpacing.md,
+          AppSpacing.md,
+          AppSpacing.scrollBottom(context),
+        ),
           children: [
             Text(
               subtitle,

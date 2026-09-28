@@ -93,7 +93,11 @@ void main() {
   });
 
   group('zoneAnchorPace', () {
-    test('prefers the goal race pace when a goal is set', () {
+    test('ignores the goal race pace and uses current fitness', () {
+      // Changed deliberately. The goal used to be the preferred anchor, which
+      // meant a stretch goal pulled the whole ladder up: a runner with a 52:25
+      // 10K targeting 49:00 got threshold 12 s/km faster than they can sustain,
+      // and the gaps between zones collapsed. See zone_anchor_regression_test.
       final anchor = zoneAnchorPace(
         goalDistance: RaceDistance.marathon,
         goalFinishTime: const Duration(hours: 3, minutes: 30),
@@ -101,13 +105,11 @@ void main() {
         anchorRaceDistance: RaceDistance.k10,
         anchorRaceTime: const Duration(minutes: 50),
       );
-      // 3:30:00 over 42.1975 km.
-      expect(anchor.secPerKm, closeTo(299, 1));
+      // 4:00:00 over 42.1975 km — fitness, not the 3:30 goal.
+      expect(anchor.secPerKm, closeTo(341, 1));
     });
 
-    test('uses the goal pace even for a non-marathon goal', () {
-      // A 10K goal still supplies the reference point; the zone offsets are
-      // relative to effort, not to the literal distance.
+    test('a non-marathon goal is ignored too', () {
       final anchor = zoneAnchorPace(
         goalDistance: RaceDistance.k10,
         goalFinishTime: const Duration(minutes: 40),
@@ -115,7 +117,20 @@ void main() {
         anchorRaceDistance: null,
         anchorRaceTime: null,
       );
-      expect(anchor.secPerKm, closeTo(240, 1)); // 40:00 / 10 km
+      expect(anchor.secPerKm, closeTo(341, 1));
+    });
+
+    test('falls back to the anchor race when no marathon equivalent exists', () {
+      // A stale-only race set. Previously a goal covered for this; now it must
+      // not, so the anchor race does.
+      final anchor = zoneAnchorPace(
+        goalDistance: RaceDistance.k10,
+        goalFinishTime: const Duration(minutes: 40),
+        equivalentMarathonTime: null,
+        anchorRaceDistance: RaceDistance.k10,
+        anchorRaceTime: const Duration(minutes: 50),
+      );
+      expect(anchor.secPerKm, closeTo(300, 1)); // 50:00 / 10 km
     });
 
     test('falls back to the equivalent marathon time without a goal', () {

@@ -122,13 +122,56 @@ FitnessAssessment assessFitness(List<RaceResult> races, DateTime now) {
 
   notes.addAll(_heartRateNotes(fresh));
 
+  // A time the runner actually ran at a distance is a *fact* about that
+  // distance. A Riegel projection from a different race is a guess about it,
+  // and the guess must never be allowed to contradict the measurement.
+  //
+  // This was a real report: a 42:02 10K five days old, and a half marathon
+  // forty days old, produced an expectation of 44:01 for the 10K — the
+  // projection. A goal two seconds inside the PB was then reported as a 5%
+  // "hard end" stretch, which is simply false.
+  //
+  // `pool` is newest-first, so the first hit per distance is the most recent
+  // run at that distance. Using the freshest one is the conservative choice as
+  // well as the correct one: a runner's current training 10K is better evidence
+  // of today than a spring PB.
+  final measured = <RaceDistance, RaceResult>{};
+  for (final r in pool) {
+    measured.putIfAbsent(r.distance, () => r);
+  }
+
   final equivalents = <RaceDistance, Duration>{};
   for (final d in RaceDistance.values) {
-    if (d == anchor.distance) {
+    final run = measured[d];
+    if (run != null) {
+      equivalents[d] = run.time;
+    } else if (d == anchor.distance) {
       equivalents[d] = anchor.time;
     } else {
       equivalents[d] = predictFrom(anchor, target: d);
     }
+  }
+
+  // Disclosed rather than silently corrected: if the projection and the
+  // measurement disagreed, the runner is entitled to know which one is being
+  // used and why.
+  final corrected = <RaceDistance>[];
+  for (final d in RaceDistance.values) {
+    final run = measured[d];
+    if (run == null) continue;
+    final projected = predictFrom(anchor, target: d);
+    final drift = (projected.inSeconds - run.time.inSeconds) /
+        run.time.inSeconds;
+    if (drift.abs() > 0.01) corrected.add(d);
+  }
+  if (corrected.isNotEmpty) {
+    final one = corrected.length == 1;
+    notes.add(
+      'Your ${corrected.map((d) => d.label).join(' and ')} ${one ? 'time is' : 'times are'} '
+      'taken from a ${one ? 'race' : 'set of races'} you have actually run, not '
+      'projected from your ${anchor.distance.label}. Where a projection would '
+      'have said slower, we have used the time you ran.',
+    );
   }
 
   return FitnessAssessment(
