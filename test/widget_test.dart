@@ -1188,6 +1188,106 @@ void main() {
     });
   });
 
+  group('how long you have been running is asked in years', () {
+    // Regression: it was a bare month counter with no unit stated, and a runner
+    // with three years' training entered "3". The plan read three *months*,
+    // routed them to the beginner block, and gave a 1:56 half marathon twelve
+    // weeks containing no hard sessions at all.
+    Future<void> openWizardAtHistory(WidgetTester tester) async {
+      await tester.pumpWidget(app(await loaded(onboarded: false)));
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the running step asks in years, not months', (tester) async {
+      await openWizardAtHistory(tester);
+      expect(
+        find.text('HOW LONG HAVE YOU BEEN RUNNING REGULARLY?'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('profile-years')), findsOneWidget);
+      expectNoLayoutError(tester);
+    });
+
+    testWidgets('the answer explains which plan you will get', (tester) async {
+      await openWizardAtHistory(tester);
+      await scrollTo(tester, find.byKey(const Key('profile-years')));
+      // Default is one year, and it says so in the same unit.
+      expect(
+        find.textContaining('periodised plan'),
+        findsWidgets,
+        reason: 'the consequence of the answer must be visible',
+      );
+    });
+
+    testWidgets('three years stores as 36 months and yields hard sessions',
+        (tester) async {
+      // The default fixture is 36 months, so the counter seeds to 3 years and
+      // no tapping is needed to be at three.
+      final controller = await loaded(
+        races: [k10(const Duration(minutes: 52, seconds: 25))],
+        goal: marathonGoal(),
+      );
+      await tester.pumpWidget(app(controller));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byIcon(Icons.insights_outlined));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.person_outline));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('edit-profile')));
+      await tester.pumpAndSettle();
+
+      final counter = find.byKey(const Key('profile-years'));
+      await scrollTo(tester, counter);
+      expect(tester.widget<Counter>(counter).value, 3);
+
+      expect(controller.profile!.monthsRunning, 36,
+          reason: 'three years must store as 36 months');
+      expect(
+        controller.plan!.weeks.any((w) => w.workouts.any((s) =>
+            s.type.name == 'tempo' || s.type.name == 'intervals')),
+        isTrue,
+        reason: 'and the plan must contain hard sessions',
+      );
+
+      // One tap is one year, and it must move the stored value by twelve.
+      await tester.tap(find.descendant(
+        of: counter,
+        matching: find.byIcon(Icons.add),
+      ));
+      await tester.pumpAndSettle();
+      expect(controller.profile!.monthsRunning, 48);
+    });
+
+    testWidgets('an existing profile is shown in years, rounded up',
+        (tester) async {
+      // 18 months is not a beginner, so it must not display as one year.
+      final controller = await loaded(
+        p: RunnerProfile(
+          name: 'Sam',
+          age: 34,
+          gender: Gender.preferNotToSay,
+          monthsRunning: 18,
+          daysPerWeek: 4,
+        ),
+        races: [k10(const Duration(minutes: 44))],
+        goal: marathonGoal(),
+      );
+      await tester.pumpWidget(app(controller));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.insights_outlined));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.person_outline));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('edit-profile')));
+      await tester.pumpAndSettle();
+
+      final counter = tester.widget<Counter>(find.byKey(const Key('profile-years')));
+      expect(counter.value, 2, reason: '18 months displays as 2 years');
+    });
+  });
+
   group('theme', () {
     testWidgets('uses the intended dark surfaces and brand', (tester) async {
       final controller = await loaded();

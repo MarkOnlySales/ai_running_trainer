@@ -9,7 +9,7 @@ Only third-party dependency is `shared_preferences`; the typeface is bundled, no
 
 ```bash
 flutter pub get
-flutter test                        # 482 unit + widget, mocked storage
+flutter test                        # 501 unit + widget, mocked storage
 flutter test integration_test -d emulator-5554   # 12 on-device, REAL storage
 flutter analyze                     # must be clean
 flutter build web --release
@@ -211,42 +211,45 @@ exact total.
 the prescribed pace may be too fast, because that is usually a pace to hold rather than a plan to
 change.
 
-## A trained plan must contain hard sessions — and that is currently unenforced
+## A trained plan must contain hard sessions — enforced
 
-**Open bug, cause unknown. Do not re-derive it from the code.** A runner with two years' training,
-three days a week, a 24:10 5K, a 52:25 10K and a 1:56:10 half, **with a goal race set**, is seeing
-only Easy runs and a Long run — no intervals, no threshold, no tempo.
+**Found via a second real report.** A runner with a 1:56 half marathon, a 52:25 10K, 35 km a week,
+four days a week and a 10K goal in February was given twelve weeks of `Easy | Easy | Long` and no
+hard sessions at all.
 
-Two diagnoses were reached and **both were wrong**:
+**Cause: `monthsRunning` was stored as `3`.** The runner meant three *years*. The experience counter
+was a bare month stepper with **no unit stated anywhere**, and "3" is a natural answer to "how long
+have you been running" if you think in years. `isBeginnerPath` read three months, took the
+`monthsRunning < 12` branch, and returned the beginner base block — which has **zero quality sessions
+by design**. Everything else in the profile was correct and could not save them.
 
-1. *An accepted `drop-quality` proposal.* Plausible, because `suppressQuality` replaces the quality
-   slot with an easy run, so a 3-day week becomes `Easy | Easy | Long` — character-for-character
-   what was reported. Wrong: nothing is listed as applied, and the directive only exists if the
-   runner taps accept.
-2. *`isBeginnerPath` misrouting them.* Right instinct, wrong conclusion. Every branch was checked
-   against the reported numbers and cleared.
+- The counter now speaks in **years**, and answers in the same unit it asks
+  (`ProfileEditor._yearsRunningLabel`). An 18-month history shows as 2 years, because rounding *down*
+  would put someone on the wrong side of the 12-month gate.
+- **The volume gate no longer demotes on its own.** A single self-reported number must not override
+  months of training plus race data.
+- `test/domain/hard_session_invariant_test.dart` asserts **a trained plan carries at least one tempo
+  or interval in every non-cutback, non-taper week**, at 3/4/5/6 days a week, base and race blocks —
+  and that the beginner block has none, so the two paths are distinguishable by construction. That
+  assertion is the guard, and it did not exist before this bug.
 
-**Run `integration_test/diagnostic_hard_sessions_test.dart` on the device first.** It prints the
-stored profile, evaluates each `isBeginnerPath` branch separately, and lists every generated week
-with its session types. It overwrites stored storage.
+**The lesson, and it repeats last session's: two wrong diagnoses in a row, both from reading the
+source instead of the state.** The app could not tell the runner either — a beginner route renders
+identically to a deliberately all-easy plan. When a rendering ambiguity hides the cause, instrument
+the real stored state. Both this bug and the earlier long-run bug came from the runner's numbers,
+never from a test; when a report contradicts the code, the stored data wins.
 
-**The lesson worth keeping:** two different causes render an *identical* week, and nothing in the UI
-distinguishes them. Reading the source confidently was actively misleading, twice. When a rendering
-ambiguity hides the cause, instrument the real state rather than reasoning about the code — and
-prefer a diagnostic the user can paste back over an argument about which branch it must be.
-
-**A test that would have caught this, and does not exist yet:** a trained plan must carry at least
-one quality session in every non-cutback, non-taper week. Until that is asserted, nothing prevents
-the regression. Add it with the fix.
-
-Two related design facts, already confirmed and independent of the bug:
+Still open, unchanged by this fix:
 
 - **Without a goal race, intervals are structurally unreachable.** `buildTrainedBasePlan` sets
   `phases = List.filled(12, PlanPhase.base)`, and `_quality` only emits intervals in
-  `PlanPhase.specific`. The base block is 12 identical tempos.
-- **`suppressQuality` is blunt on a 3-day plan.** There, the tempo is the *only* quality session, so
-  suppressing it leaves an all-easy plan. The beginner-block "zero quality is safe" property covers a
-  *starting* block, not an end state for a trained runner.
+  `PlanPhase.specific`. Twelve identical tempos.
+- **The week view does not say when a plan has no hard sessions**, so a beginner route reads as a
+  design choice rather than a routing outcome. This is what made the bug invisible to the runner.
+- **`suppressQuality` is blunt at 3 days a week**, where the tempo is the only quality session. The
+  beginner-block "zero quality is safe" property covers a *starting* block, not an end state for a
+  trained runner.
+- **No 400m or 1000m rep formats** — `intervalRep`/`intervalRecovery` are hardcoded to 3 min / 3 min.
 
 ## The 90% rule (reactive volume curve)
 

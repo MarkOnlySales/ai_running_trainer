@@ -81,7 +81,10 @@ class _ProfileEditorState extends State<ProfileEditor> {
 
   int _age = 30;
   Gender _gender = Gender.preferNotToSay;
-  int _monthsRunning = 6;
+
+  /// Years, not months. The model stores months; the form speaks in the unit a
+  /// person actually counts in. See the counter below.
+  int _yearsRunning = 1;
   int _daysPerWeek = 3;
 
   @override
@@ -106,9 +109,29 @@ class _ProfileEditorState extends State<ProfileEditor> {
     _weeklyKm.text = v?.estimatedWeeklyKm?.toString() ?? '';
     _age = v?.age ?? 30;
     _gender = v?.gender ?? Gender.preferNotToSay;
-    _monthsRunning = v?.monthsRunning ?? 6;
+    // Round up: someone who has run for 18 months is not a beginner, and
+    // truncating to 1 year would put them on the wrong side of the gate.
+    _yearsRunning = (((v?.monthsRunning ?? 12) / 12).ceil()).clamp(0, 40);
     _daysPerWeek = v?.daysPerWeek ?? 3;
   }
+
+  /// Spells out what the answer means, in the same unit it was asked in.
+  String get _yearsRunningLabel {
+    if (_yearsRunning <= 0) {
+      return 'Just starting — you will begin with a base block.';
+    }
+    if (_yearsRunning < 1) return 'Under a year — base block.';
+    if (_yearsRunning == 1) {
+      return 'A year — you will get a full periodised plan.';
+    }
+    if (_yearsRunning < 10) {
+      return '$_yearsRunning years — a full periodised plan, with hard '
+          'sessions every week.';
+    }
+    return '$_yearsRunning years — a full periodised plan.';
+  }
+
+  int get _monthsRunningFromForm => _yearsRunning * 12;
 
   @override
   void dispose() {
@@ -129,7 +152,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
       name: name.isEmpty ? 'Runner' : name,
       age: _age,
       gender: _gender,
-      monthsRunning: _monthsRunning,
+      monthsRunning: _monthsRunningFromForm,
       daysPerWeek: _daysPerWeek,
       heightCm: double.tryParse(_height.text.trim()),
       weightKg: double.tryParse(_weight.text.trim()),
@@ -218,20 +241,30 @@ class _ProfileEditorState extends State<ProfileEditor> {
       children: [
         const FieldLabel('How long have you been running regularly?'),
         const SizedBox(height: AppSpacing.sm),
+        // Counted in YEARS, not months.
+        //
+        // This was a bare month counter, and someone with three years' training
+        // entered "3" — which the plan read as three *months*, routed them to
+        // the beginner base block, and gave a runner with a 1:56 half marathon
+        // twelve weeks containing no hard sessions at all. The unit was never
+        // stated and three is a perfectly natural answer to "how long" if you
+        // think in years.
+        //
+        // The 12-month gate in `isBeginnerPath` is exactly a one-year boundary,
+        // so years are also the unit that maps onto the decision.
         Counter(
-          value: _monthsRunning,
+          key: const Key('profile-years'),
+          value: _yearsRunning.clamp(0, 40),
           min: 0,
-          max: 240,
+          max: 40,
           onChanged: (v) {
-            setState(() => _monthsRunning = v);
+            setState(() => _yearsRunning = v);
             _emit();
           },
         ),
         const SizedBox(height: AppSpacing.sm),
         Text(
-          _monthsRunning < 12
-              ? 'Under a year — you will start with a base block.'
-              : 'A year or more — you will get a full periodised plan.',
+          _yearsRunningLabel,
           style: theme.bodyMuted.copyWith(fontSize: 13),
         ),
         const SizedBox(height: AppSpacing.lg),
